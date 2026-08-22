@@ -9,7 +9,7 @@ This is **firmware layout profiles** (flash via [Zapp](https://github.com/zsa/za
 Omarchy **does not** run package installs when you add a plugin. Flash tools are installed on demand (bar button or CLI).
 
 ```bash
-omarchy plugin add https://github.com/YOUR_USER/omarchy-voyager.git --enable
+omarchy plugin add https://github.com/fram74/omarchy-voyager.git --enable
 ```
 
 Then:
@@ -34,7 +34,7 @@ ln -s ~/.config/omarchy/plugins/fram.voyager/bin/voyager-layout ~/.local/bin/voy
 ### Local checkout
 
 ```bash
-git clone https://github.com/YOUR_USER/omarchy-voyager.git
+git clone git@github.com:fram74/omarchy-voyager.git
 cd omarchy-voyager
 ./scripts/install.sh
 voyager-layout install-deps --with-dfu
