@@ -16,7 +16,7 @@ BarWidget {
 
   readonly property bool connected: mode === "normal" || mode === "bootloader"
 
-  // Hide the bar slot entirely when the Voyager is unplugged (same idea as mic).
+  // Hide the bar slot when the Voyager is unplugged (same idea as mic).
   visible: connected
 
   // Plugin checkout dir (works for omarchy plugin add and local symlink installs).
@@ -123,6 +123,7 @@ BarWidget {
         } catch (e) {
           root.mode = "missing"
         }
+        root.statusReady = true
         if (root.refreshPending)
           root.refresh()
       }
