@@ -1,0 +1,644 @@
+#!/usr/bin/env python3
+"""Omarchy Voyager layout switcher — flash Oryx profiles via Zapp."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tomllib
+from pathlib import Path
+
+APP = "voyager-layout"
+# Plugin / repo root (parent of bin/)
+REPO_ROOT = Path(__file__).resolve().parent.parent
+EXAMPLE_CONFIG = REPO_ROOT / "config" / "layouts.toml.example"
+CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "omarchy-voyager"
+CONFIG_PATH = CONFIG_DIR / "layouts.toml"
+STATE_DIR = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "omarchy-voyager"
+STATE_CURRENT = STATE_DIR / "current"
+CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "omarchy-voyager"
+VOYAGER_VID = "3297"
+# Normal mode PIDs
+VOYAGER_PIDS_NORMAL = ("1977", "1978")
+# Ignition bootloader PIDs (STM32 / GD32)
+VOYAGER_PIDS_BOOTLOADER = ("0791", "1791")
+# Ignition STM32 flash base (Zapp uses this for 3297:0791)
+IGNITION_FLASH_ADDR = "0x08002000"
+
+
+def die(msg: str, code: int = 1) -> None:
+    print(f"{APP}: {msg}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def notify(title: str, body: str, urgent: bool = False) -> None:
+    if not shutil.which("notify-send"):
+        return
+    cmd = ["notify-send", "-a", "Voyager", title, body]
+    if urgent:
+        cmd[1:1] = ["-u", "critical"]
+    subprocess.run(cmd, check=False)
+
+
+def load_config() -> dict:
+    if not CONFIG_PATH.is_file():
+        hint = EXAMPLE_CONFIG if EXAMPLE_CONFIG.is_file() else "config/layouts.toml.example"
+        die(
+            f"missing config {CONFIG_PATH}\n"
+            f"  mkdir -p {CONFIG_DIR} && cp {hint} {CONFIG_PATH}"
+        )
+    with CONFIG_PATH.open("rb") as f:
+        data = tomllib.load(f)
+    layouts = data.get("layouts") or []
+    if not isinstance(layouts, list) or not layouts:
+        die("config has no [[layouts]] entries")
+    for i, layout in enumerate(layouts):
+        if "id" not in layout:
+            die(f"layouts[{i}] missing id")
+    data["layouts"] = layouts
+    data.setdefault("settings", {})
+    return data
+
+
+def find_layout(cfg: dict, layout_id: str) -> dict:
+    for layout in cfg["layouts"]:
+        if layout["id"] == layout_id:
+            return layout
+    known = ", ".join(l["id"] for l in cfg["layouts"])
+    die(f"unknown layout id {layout_id!r} (known: {known})")
+
+
+def set_current(layout_id: str) -> None:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    STATE_CURRENT.write_text(layout_id + "\n", encoding="utf-8")
+
+
+def get_current() -> str | None:
+    if STATE_CURRENT.is_file():
+        return STATE_CURRENT.read_text(encoding="utf-8").strip() or None
+    return None
+
+
+def lsusb_text() -> str:
+    try:
+        return subprocess.check_output(["lsusb"], text=True, stderr=subprocess.DEVNULL)
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return ""
+
+
+def voyager_mode() -> str:
+    """Return 'normal', 'bootloader', or 'missing'."""
+    out = lsusb_text().lower()
+    vid = VOYAGER_VID.lower()
+    for pid in VOYAGER_PIDS_BOOTLOADER:
+        if f"{vid}:{pid}" in out:
+            return "bootloader"
+    for pid in VOYAGER_PIDS_NORMAL:
+        if f"{vid}:{pid}" in out:
+            return "normal"
+    if f"id {vid}:" in out or f"{vid}:" in out:
+        return "normal"
+    return "missing"
+
+
+def voyager_connected() -> bool:
+    return voyager_mode() != "missing"
+
+
+def print_flash_howto() -> None:
+    print(
+        """
+Flash procedure (important — avoids the USB protocol error):
+  1. Voyager must be in NORMAL mode first (keys work). If unsure: unplug USB, wait 5s, replug.
+  2. Use a direct laptop port (no hub/dock), short cable, both halves joined.
+  3. Start the flash command and WAIT until you see:
+       Waiting for keyboard in bootloader mode...
+  4. Only THEN press the Reset button ONCE (top edge near the 3 key).
+  5. Do not press Reset during download / before the waiting line.
+
+If zapp keeps failing:  voyager-layout flash gaming --method dfu-util
+""".strip()
+    )
+
+
+def ensure_normal_mode() -> None:
+    mode = voyager_mode()
+    if mode == "missing":
+        die("Voyager not detected on USB — plug it in and try again")
+    if mode == "bootloader":
+        die(
+            "Voyager is already in BOOTLOADER mode.\n"
+            "  Unplug the USB cable, wait 5 seconds, plug back in (keys should work),\n"
+            "  then run the flash command again and press Reset only AFTER the waiting line."
+        )
+
+
+def cmd_list(cfg: dict, as_json: bool) -> None:
+    current = get_current()
+    rows = []
+    for layout in cfg["layouts"]:
+        rows.append(
+            {
+                "id": layout["id"],
+                "name": layout.get("name", layout["id"]),
+                "oryx": layout.get("oryx"),
+                "file": layout.get("file"),
+                "favorite": bool(layout.get("favorite")),
+                "current": layout["id"] == current,
+            }
+        )
+    if as_json:
+        print(json.dumps(rows, indent=2))
+        return
+    for row in rows:
+        marks = []
+        if row["current"]:
+            marks.append("*")
+        if row["favorite"]:
+            marks.append("fav")
+        suffix = f" [{', '.join(marks)}]" if marks else ""
+        print(f"{row['id']:16}  {row['name']}{suffix}")
+
+
+def cmd_status(cfg: dict, as_json: bool) -> None:
+    current = get_current()
+    mode = voyager_mode()
+    zapp = shutil.which("zapp")
+    dfu = shutil.which("dfu-util")
+    default = (cfg.get("settings") or {}).get("default")
+    info = {
+        "connected": mode != "missing",
+        "mode": mode,
+        "current": current,
+        "default": default,
+        "zapp": zapp,
+        "zapp_installed": bool(zapp),
+        "dfu_util": dfu,
+        "dfu_installed": bool(dfu),
+        "ready_to_flash": bool(zapp),
+        "config": str(CONFIG_PATH),
+        "repo": str(REPO_ROOT),
+        "usb_vid": VOYAGER_VID,
+    }
+    if as_json:
+        print(json.dumps(info, indent=2))
+        return
+    print(f"config:    {CONFIG_PATH}")
+    print(f"connected: {'yes' if mode != 'missing' else 'no'} (mode: {mode})")
+    print(f"current:   {current or '(none recorded)'}")
+    print(f"default:   {default or '(unset)'}")
+    print(f"zapp:      {zapp or 'NOT FOUND — run: voyager-layout install-deps'}")
+    print(f"dfu-util:  {dfu or 'optional — included by install-deps --with-dfu'}")
+
+
+def layout_target(layout: dict) -> str:
+    path = layout.get("file")
+    if path:
+        p = Path(path).expanduser()
+        if not p.is_file():
+            die(f"layout file missing: {p}")
+        return str(p)
+    url = layout.get("oryx")
+    if not url or "REPLACE_ME" in url:
+        die(f"layout {layout['id']!r} has no usable oryx URL or file — edit {CONFIG_PATH}")
+    return url
+
+
+def ensure_zapp() -> str:
+    zapp = shutil.which("zapp")
+    if not zapp:
+        die(
+            "zapp not found.\n"
+            "  Install flash tools with:  voyager-layout install-deps\n"
+            "  Or:  omarchy pkg aur add zsa-zapp   /   yay -S zsa-zapp"
+        )
+    return zapp
+
+
+def cmd_install_deps(with_dfu: bool, yes: bool) -> None:
+    """Install Zapp (AUR) and optionally dfu-util. User-initiated — not an Omarchy hook."""
+    missing = []
+    if not shutil.which("zapp"):
+        missing.append("zsa-zapp (AUR)")
+    if with_dfu and not shutil.which("dfu-util"):
+        missing.append("dfu-util")
+
+    if not missing:
+        print("All flash tools already installed.")
+        print(f"  zapp:     {shutil.which('zapp')}")
+        if with_dfu:
+            print(f"  dfu-util: {shutil.which('dfu-util')}")
+        return
+
+    print("Will install:", ", ".join(missing))
+    print(
+        "Note: Omarchy plugins cannot auto-install packages on "
+        "`omarchy plugin add`. This command is run by you (or the bar button)."
+    )
+
+    if not yes and sys.stdin.isatty():
+        ans = input("Continue? [y/N] ").strip().lower()
+        if ans not in ("y", "yes"):
+            raise SystemExit(1)
+
+    code = 0
+    if not shutil.which("zapp"):
+        if shutil.which("omarchy"):
+            print("→ omarchy pkg aur add zsa-zapp")
+            code = subprocess.call(["omarchy", "pkg", "aur", "add", "zsa-zapp"])
+        elif shutil.which("yay"):
+            print("→ yay -S --needed zsa-zapp")
+            code = subprocess.call(["yay", "-S", "--needed", "zsa-zapp"])
+        else:
+            die("need `omarchy` or `yay` to install zsa-zapp from the AUR")
+        if code != 0:
+            raise SystemExit(code)
+
+    if with_dfu and not shutil.which("dfu-util"):
+        if shutil.which("omarchy"):
+            print("→ omarchy pkg add dfu-util")
+            code = subprocess.call(["omarchy", "pkg", "add", "dfu-util"])
+        else:
+            print("→ sudo pacman -S --needed dfu-util")
+            code = subprocess.call(["sudo", "pacman", "-S", "--needed", "dfu-util"])
+        if code != 0:
+            raise SystemExit(code)
+
+    print("ok — flash tools ready")
+    if shutil.which("zapp"):
+        print(f"  zapp:     {shutil.which('zapp')}")
+    if shutil.which("dfu-util"):
+        print(f"  dfu-util: {shutil.which('dfu-util')}")
+
+
+def parse_oryx_layout_id(url: str) -> str | None:
+    # https://configure.zsa.io/voyager/layouts/<id>/...
+    parts = url.rstrip("/").split("/")
+    try:
+        i = parts.index("layouts")
+        return parts[i + 1]
+    except (ValueError, IndexError):
+        return None
+
+
+def fetch_latest_revision(layout_id: str) -> str:
+    import urllib.request
+
+    api = f"https://oryx.zsa.io/firmware/latest/{layout_id}"
+    with urllib.request.urlopen(api, timeout=30) as resp:
+        data = json.loads(resp.read().decode())
+    rev = data.get("latest")
+    if not rev:
+        die(f"Oryx returned no revision for layout {layout_id}")
+    return rev
+
+
+def download_firmware_bin(revision: str, dest: Path) -> Path:
+    import urllib.request
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    url = f"https://oryx.zsa.io/firmware/{revision}"
+    print(f"Downloading firmware {revision} …")
+    urllib.request.urlretrieve(url, dest)
+    if dest.stat().st_size < 1000:
+        die(f"downloaded firmware looks empty: {dest}")
+    print(f"  saved {dest} ({dest.stat().st_size} bytes)")
+    return dest
+
+
+def wait_for_bootloader(timeout_sec: int = 60) -> str:
+    """Block until Voyager appears in bootloader; return PID."""
+    import time
+
+    print("Waiting for keyboard in bootloader mode...")
+    print(">>> Press the Voyager Reset button ONCE now.")
+    deadline = time.time() + timeout_sec
+    while time.time() < deadline:
+        out = lsusb_text().lower()
+        for pid in VOYAGER_PIDS_BOOTLOADER:
+            if f"{VOYAGER_VID.lower()}:{pid}" in out:
+                # Settle — zapp skips this when bootloader is already present;
+                # that race causes "hardware fault or protocol violation".
+                print(f"  bootloader detected (3297:{pid}) — settling 2s …")
+                time.sleep(2.0)
+                return pid
+        time.sleep(0.25)
+    die("timed out waiting for bootloader — press Reset only after this wait starts")
+
+
+def flash_with_dfu_util(bin_path: Path) -> int:
+    dfu = shutil.which("dfu-util")
+    if not dfu:
+        die("dfu-util not found. Install with: sudo pacman -S dfu-util")
+
+    pid = wait_for_bootloader()
+    # Prefer matching the live bootloader PID; STM32 Ignition is 0791.
+    spec = f"{VOYAGER_VID}:{pid}"
+    cmd = [
+        dfu,
+        "-d",
+        spec,
+        "-a",
+        "0",
+        "-s",
+        f"{IGNITION_FLASH_ADDR}:leave",
+        "-D",
+        str(bin_path),
+    ]
+    print("Running:", " ".join(cmd))
+    return subprocess.call(cmd)
+
+
+def flash_with_zapp(target: str) -> int:
+    zapp = ensure_zapp()
+    return subprocess.call([zapp, "flash", target])
+
+
+def resolve_firmware_file(layout: dict) -> Path:
+    """Return a local .bin for dfu-util (download from Oryx if needed)."""
+    if layout.get("file"):
+        p = Path(layout["file"]).expanduser()
+        if not p.is_file():
+            die(f"layout file missing: {p}")
+        return p
+
+    url = layout.get("oryx") or ""
+    layout_id = parse_oryx_layout_id(url)
+    if not layout_id or "REPLACE_ME" in url:
+        die(f"need a real oryx URL or file for layout {layout.get('id')}")
+
+    # Prefer explicit revision in URL: .../layouts/<id>/<rev>
+    parts = url.rstrip("/").split("/")
+    rev = None
+    try:
+        i = parts.index("layouts")
+        if len(parts) > i + 2 and parts[i + 2] not in ("latest", "0"):
+            if parts[i + 2] != "latest":
+                rev = parts[i + 2]
+    except ValueError:
+        pass
+    if not rev:
+        rev = fetch_latest_revision(layout_id)
+
+    dest = CACHE_DIR / f"{layout_id}-{rev}.bin"
+    if dest.is_file() and dest.stat().st_size > 1000:
+        print(f"Using cached firmware {dest}")
+        return dest
+    return download_firmware_bin(rev, dest)
+
+
+def cmd_open(cfg: dict, layout_id: str | None) -> None:
+    if not layout_id:
+        layout_id = get_current() or (cfg.get("settings") or {}).get("default")
+    if not layout_id:
+        die("pass a layout id, or set settings.default / flash once first")
+    layout = find_layout(cfg, layout_id)
+    url = layout.get("oryx")
+    if not url or "REPLACE_ME" in str(url):
+        die(f"layout {layout_id!r} has no oryx URL to open")
+    # Prefer Omarchy browser launcher when present.
+    if shutil.which("omarchy-launch-browser"):
+        subprocess.Popen(["omarchy-launch-browser", url])
+    elif shutil.which("xdg-open"):
+        subprocess.Popen(["xdg-open", url])
+    else:
+        print(url)
+        return
+    print(f"opened {url}")
+
+
+def cmd_flash(cfg: dict, layout_id: str | None, latest: bool, method: str) -> None:
+    settings = cfg.get("settings") or {}
+    do_notify = bool(settings.get("notify", True))
+
+    ensure_normal_mode()
+    print_flash_howto()
+
+    if latest:
+        if method != "zapp":
+            die("--latest only works with --method zapp (uses zapp update)")
+        zapp = ensure_zapp()
+        if do_notify:
+            notify("Voyager", "Updating current Oryx layout — press Reset when prompted", urgent=True)
+        print("Running: zapp update")
+        print(">>> Wait for the waiting line, THEN press Reset once.")
+        raise SystemExit(subprocess.call([zapp, "update"]))
+
+    if not layout_id:
+        layout_id = settings.get("default")
+    if not layout_id:
+        die("pass a layout id or --latest, or set settings.default")
+
+    layout = find_layout(cfg, layout_id)
+    name = layout.get("name", layout_id)
+
+    if do_notify:
+        notify(
+            "Voyager",
+            f"Flashing “{name}” — wait for prompt, then press Reset once",
+            urgent=True,
+        )
+
+    print(f"Flashing layout {layout_id!r} via {method}")
+    if method == "zapp":
+        target = layout_target(layout)
+        print(f"  target: {target}")
+        print(">>> Wait for: Waiting for keyboard in bootloader mode...")
+        print(">>> Then press Reset ONCE.")
+        code = flash_with_zapp(target)
+    elif method == "dfu-util":
+        bin_path = resolve_firmware_file(layout)
+        code = flash_with_dfu_util(bin_path)
+    else:
+        die(f"unknown method {method!r}")
+
+    if code == 0:
+        set_current(layout_id)
+        if do_notify:
+            notify("Voyager", f"Flashed “{name}”")
+        print(f"ok — recorded current={layout_id}")
+    else:
+        if do_notify:
+            notify("Voyager", f"Flash failed for “{name}”", urgent=True)
+        print(
+            "\nFlash failed. Common fix for 'hardware fault or protocol violation':\n"
+            "  • Unplug Voyager, wait 5s, replug (must be in normal typing mode)\n"
+            "  • Direct USB port, no hub\n"
+            "  • Press Reset ONLY after the waiting line appears\n"
+            "  • Retry with:  voyager-layout flash "
+            f"{layout_id} --method dfu-util\n",
+            file=sys.stderr,
+        )
+        raise SystemExit(code)
+
+
+def cmd_pick(cfg: dict, method: str = "zapp") -> None:
+    """Interactive pick via Omarchy menu (or fuzzel/rofi fallback), then flash."""
+    # Options for omarchy-menu-select: optional "glyph<TAB>label" or
+    # "glyph<TAB>label<TAB>subtext". Subtext is returned as stable key.
+    options: list[str] = []
+    for layout in cfg["layouts"]:
+        name = layout.get("name", layout["id"])
+        # icon TAB visible name TAB id (id comes back for flashing)
+        options.append(f"󰌌\t{name}\t{layout['id']}")
+
+    choice = None
+
+    # Prefer Omarchy's native select menu (always present on Omarchy).
+    if shutil.which("omarchy-menu-select") or shutil.which("omarchy"):
+        cmd = ["omarchy", "menu", "select", "Voyager layout", *options]
+        proc = subprocess.run(cmd, text=True, capture_output=True)
+        if proc.returncode != 0:
+            # User cancelled or menu failed
+            if proc.stderr.strip():
+                print(proc.stderr.strip(), file=sys.stderr)
+            raise SystemExit(proc.returncode or 1)
+        # Returns "label" or "label<TAB>subtext" — we want the id (subtext).
+        raw = proc.stdout.strip()
+        if not raw:
+            raise SystemExit(1)
+        parts = raw.split("\t")
+        choice = parts[-1].strip() if parts else ""
+    else:
+        labels = [f"{l['id']}\t{l.get('name', l['id'])}" for l in cfg["layouts"]]
+        text = "\n".join(labels) + "\n"
+        picker = next((c for c in ("fuzzel", "walker", "rofi", "wofi") if shutil.which(c)), None)
+        if not picker:
+            die("no picker found — install Omarchy menu or use: voyager-layout flash <id>")
+        if picker == "fuzzel":
+            args = ["fuzzel", "--dmenu", "--prompt=Voyager layout> "]
+        elif picker == "walker":
+            args = ["walker", "-d", "-p", "Voyager layout"]
+        elif picker == "rofi":
+            args = ["rofi", "-dmenu", "-p", "Voyager layout"]
+        else:
+            args = ["wofi", "--dmenu", "-p", "Voyager layout"]
+        proc = subprocess.run(args, input=text, text=True, capture_output=True)
+        if proc.returncode != 0 or not proc.stdout.strip():
+            raise SystemExit(1)
+        choice = proc.stdout.strip().split("\t", 1)[0].strip()
+
+    if not choice:
+        raise SystemExit(1)
+    # If user somehow picked a display name, map it back to an id.
+    ids = {l["id"] for l in cfg["layouts"]}
+    if choice not in ids:
+        for layout in cfg["layouts"]:
+            if layout.get("name") == choice:
+                choice = layout["id"]
+                break
+
+    # From the bar/menu there is no TTY — open a floating terminal so the
+    # "Waiting for bootloader / press Reset" prompt is visible.
+    if not sys.stdin.isatty() and shutil.which(
+        "omarchy-launch-floating-terminal-with-presentation"
+    ):
+        flash_cmd = f"voyager-layout flash {choice} --method {method}; echo; read -k 1"
+        subprocess.Popen(
+            ["omarchy-launch-floating-terminal-with-presentation", flash_cmd]
+        )
+        return
+
+    cmd_flash(cfg, choice, latest=False, method=method)
+
+
+def cmd_cycle_favorites(cfg: dict) -> None:
+    favs = [l["id"] for l in cfg["layouts"] if l.get("favorite")]
+    if not favs:
+        die("no layouts marked favorite = true")
+    current = get_current()
+    if current in favs:
+        nxt = favs[(favs.index(current) + 1) % len(favs)]
+    else:
+        nxt = favs[0]
+    print(f"cycling favorites → {nxt}")
+    cmd_flash(cfg, nxt, latest=False, method="zapp")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog=APP,
+        description="Switch ZSA Voyager Oryx layouts from Omarchy (flash via Zapp).",
+    )
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    list_p = sub.add_parser("list", help="List configured layouts")
+    list_p.add_argument("--json", action="store_true")
+
+    st = sub.add_parser("status", help="Connection, current layout, zapp")
+    st.add_argument("--json", action="store_true")
+
+    flash = sub.add_parser("flash", help="Flash a layout (then press Reset)")
+    flash.add_argument("id", nargs="?", help="Layout id from config")
+    flash.add_argument(
+        "--latest",
+        action="store_true",
+        help="Run zapp update for the layout already on the board",
+    )
+    flash.add_argument(
+        "--method",
+        choices=("zapp", "dfu-util"),
+        default="zapp",
+        help="Flash backend (dfu-util adds a settle delay; use if zapp hits USB faults)",
+    )
+
+    open_p = sub.add_parser("open", help="Open layout in Oryx (browser)")
+    open_p.add_argument("id", nargs="?", help="Layout id (default: current/default)")
+
+    sub.add_parser("pick", help="Picker UI then flash")
+    sub.add_parser("cycle-favorites", help="Flash next favorite layout")
+
+    deps = sub.add_parser(
+        "install-deps",
+        help="Install Zapp (AUR) so layouts can be flashed (user-initiated)",
+    )
+    deps.add_argument(
+        "--with-dfu",
+        action="store_true",
+        help="Also install dfu-util (optional fallback flasher)",
+    )
+    deps.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Do not prompt for confirmation",
+    )
+    return p
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = build_parser().parse_args(argv)
+
+    # status / install-deps work even before layouts.toml exists
+    if args.cmd == "status":
+        cfg: dict = {"layouts": [], "settings": {}}
+        if CONFIG_PATH.is_file():
+            cfg = load_config()
+        cmd_status(cfg, args.json)
+        return
+
+    if args.cmd == "install-deps":
+        cmd_install_deps(with_dfu=args.with_dfu, yes=args.yes)
+        return
+
+    cfg = load_config()
+    if args.cmd == "list":
+        cmd_list(cfg, args.json)
+    elif args.cmd == "flash":
+        cmd_flash(cfg, args.id, args.latest, args.method)
+    elif args.cmd == "open":
+        cmd_open(cfg, args.id)
+    elif args.cmd == "pick":
+        cmd_pick(cfg)
+    elif args.cmd == "cycle-favorites":
+        cmd_cycle_favorites(cfg)
+    else:
+        die(f"unknown command {args.cmd}")
+
+
+if __name__ == "__main__":
+    main()

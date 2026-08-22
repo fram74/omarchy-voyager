@@ -1,0 +1,27 @@
+# Copy to ~/.config/omarchy-voyager/layouts.toml and fill in your Oryx URLs.
+# Get a URL from https://configure.zsa.io/voyager after compiling a layout.
+
+[settings]
+default = "daily"
+notify = true
+
+[[layouts]]
+id = "daily"
+name = "Daily"
+oryx = "https://configure.zsa.io/voyager/layouts/REPLACE_ME/latest"
+favorite = true
+# Optional documented hotkey (wire in hypr/bindings.lua.snippet):
+# hotkey = "SUPER + SHIFT + F1"
+
+[[layouts]]
+id = "gaming"
+name = "Gaming"
+oryx = "https://configure.zsa.io/voyager/layouts/REPLACE_ME_TOO/latest"
+favorite = true
+
+[[layouts]]
+id = "coding"
+name = "Coding"
+oryx = "https://configure.zsa.io/voyager/layouts/REPLACE_ME_THREE/latest"
+# Or flash a local binary instead of / as well as an Oryx URL:
+# file = "/home/fram/.local/share/voyager/coding.bin"

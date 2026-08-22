@@ -1,0 +1,19 @@
+-- Add to ~/.config/hypr/bindings.lua (Omarchy Lua bindings).
+-- Requires voyager-layout on PATH (see scripts/install.sh).
+--
+-- Flash hotkeys STAGE a flash; when the notification appears, press the
+-- Voyager Reset button (or your mapped Reset key).
+
+-- Picker (all layouts from ~/.config/omarchy-voyager/layouts.toml)
+o.bind("SUPER + SHIFT + V", "Voyager layout picker", "voyager-layout pick")
+
+-- Update the layout already on the board to its latest Oryx revision
+o.bind("SUPER + SHIFT + U", "Voyager flash latest", "voyager-layout flash --latest")
+
+-- Cycle layouts marked favorite = true
+o.bind("SUPER + SHIFT + ALT + V", "Voyager cycle favorites", "voyager-layout cycle-favorites")
+
+-- Optional: direct flash for specific ids (uncomment and match your config)
+-- o.bind("SUPER + SHIFT + F1", "Voyager daily", "voyager-layout flash daily")
+-- o.bind("SUPER + SHIFT + F2", "Voyager gaming", "voyager-layout flash gaming")
+-- o.bind("SUPER + SHIFT + F3", "Voyager coding", "voyager-layout flash coding")

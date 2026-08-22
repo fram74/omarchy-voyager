@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "fram.voyager",
+  "name": "Voyager layouts",
+  "version": "0.2.0",
+  "author": "fram",
+  "license": "MIT",
+  "description": "Switch ZSA Voyager Oryx layouts from the Omarchy bar. Flash via Zapp (AUR); the panel can install flash tools when missing.",
+  "kinds": ["bar-widget"],
+  "activation": "on-demand",
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Voyager",
+    "description": "Dropdown to flash Voyager Oryx layouts; hides when the keyboard is unplugged",
+    "category": "Input",
+    "aliases": ["voyager", "zsa", "oryx", "keyboard"],
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

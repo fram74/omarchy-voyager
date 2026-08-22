@@ -1,0 +1,45 @@
+{
+  // Merge these keys into ~/.config/omarchy/extensions/omarchy-menu.jsonc
+  // (or let scripts/install.sh append them).
+
+  "voyager": {
+    "icon": "󰌌",
+    "label": "Voyager",
+    "aliases": ["zsa", "oryx", "keyboard-firmware"],
+    "description": "ZSA Voyager Oryx layout profiles"
+  },
+  "voyager.pick": {
+    "icon": "󰔡",
+    "label": "Pick layout",
+    "description": "Choose a layout and flash (press Reset when prompted)",
+    "action": "voyager-layout pick"
+  },
+  "voyager.flash-latest": {
+    "icon": "󰚰",
+    "label": "Flash latest revision",
+    "description": "zapp update for the layout already on the board",
+    "action": "voyager-layout flash --latest"
+  },
+  "voyager.open": {
+    "icon": "󰖟",
+    "label": "Open in Oryx",
+    "description": "Edit the current/default layout in the browser",
+    "action": "voyager-layout open"
+  },
+  "voyager.status": {
+    "icon": "󰋼",
+    "label": "Status",
+    "action": "omarchy-launch-floating-terminal-with-presentation 'voyager-layout status; read -k 1'"
+  },
+  "voyager.cycle": {
+    "icon": "󰑖",
+    "label": "Cycle favorites",
+    "action": "voyager-layout cycle-favorites"
+  },
+  "voyager.install-deps": {
+    "icon": "󰏖",
+    "label": "Install flash tools",
+    "description": "Install Zapp (AUR) and dfu-util — required to flash",
+    "action": "omarchy-launch-floating-terminal-with-presentation 'voyager-layout install-deps --with-dfu -y; echo; read -k 1'"
+  }
+}
