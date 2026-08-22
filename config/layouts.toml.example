@@ -1,5 +1,11 @@
 # Copy to ~/.config/omarchy-voyager/layouts.toml and fill in your Oryx URLs.
-# Get a URL from https://configure.zsa.io/voyager after compiling a layout.
+#
+# 1. Compile a layout at https://configure.zsa.io/voyager
+# 2. Copy the layout URL (…/layouts/<id>/latest or …/layouts/<id>/<revision>)
+# 3. Replace REPLACE_ME below
+#
+# Full setup, flashing tips, and legal disclaimer: see README.md
+# This project is unofficial and not affiliated with ZSA.
 
 [settings]
 default = "daily"
