@@ -4,6 +4,8 @@ An unofficial [Omarchy](https://omarchy.org/) shell plugin and CLI for switching
 
 Use the top-bar keyboard icon (dropdown), the Omarchy menu, optional Hyprland hotkeys, or the `voyager-layout` command.
 
+**Visual walkthrough (screenshots):** [docs/guide/GUIDE.md](docs/guide/GUIDE.md)
+
 > **Not the same as** Omarchy’s built-in `omarchy.keyboard-layout` widget, which only cycles **OS / xkb** input languages (US, SE, …). This plugin flashes **keyboard firmware layouts**.
 
 ---
