@@ -1,7 +1,7 @@
 # Visual guide — Omarchy Voyager Layouts
 
 Demos captured on an **external monitor** (empty wallpaper workspace) with a ZSA Voyager connected, so no personal app windows appear.  
-Plugin version **0.0.1**. For install details, legal disclaimer, and troubleshooting, see the [main README](../../README.md).
+Plugin version **0.1.1**. For install details, legal disclaimer, and troubleshooting, see the [main README](../../README.md).
 
 > **Unofficial.** Not affiliated with ZSA Technology Labs. Flashing firmware is at your own risk.
 

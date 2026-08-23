@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
   "id": "net.moggia.voyager-layouts",
-  "name": "Voyager layouts",
-  "version": "0.0.1",
+  "name": "Voyager Layouts",
+  "version": "0.1.1",
   "author": "fram",
   "license": "MIT",
   "description": "Switch ZSA Voyager Oryx layouts from the Omarchy bar. Flash via Zapp (AUR); the panel can install flash tools when missing.",
