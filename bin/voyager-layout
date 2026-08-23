@@ -18,7 +18,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 APP = "voyager-layout"
-APP_VERSION = "0.2.1"
+APP_VERSION = "0.2.2"
 USER_AGENT = f"omarchy-voyager/{APP_VERSION} (https://github.com/fram74/omarchy-voyager)"
 # Plugin / repo root (parent of bin/)
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -40,7 +40,15 @@ ORYX_API_ORIGIN = f"https://{ORYX_API_HOST}"
 CONFIGURE_ORIGIN = "https://configure.zsa.io"
 # Compiled Voyager images are tens of KiB; this is a floor, not a substitute for sha256.
 MIN_FIRMWARE_BYTES = 8192
+# Hard cap so a compromised Oryx cannot fill RAM/disk before the digest is known.
+MAX_FIRMWARE_BYTES = 512 * 1024
+MAX_JSON_BYTES = 64 * 1024
+READ_CHUNK = 64 * 1024
 SHA256_HEX_LEN = 64
+
+
+class OryxReadError(Exception):
+    """Bounded-read failure when the caller wants to handle it (title lookup)."""
 
 
 def die(msg: str, code: int = 1) -> None:
@@ -137,13 +145,61 @@ def oryx_open(
     return response
 
 
-def oryx_get_bytes(url: str, timeout: int = 60) -> bytes:
+def read_bounded(
+    response,
+    max_bytes: int,
+    label: str,
+    strict: bool = True,
+) -> bytes:
+    """Read an HTTP body with a hard size cap. Never call response.read() unbounded."""
+
+    def fail(msg: str) -> None:
+        if strict:
+            die(msg)
+        raise OryxReadError(msg)
+
+    headers = getattr(response, "headers", None)
+    claimed = None
+    if headers is not None:
+        raw_len = headers.get("Content-Length")
+        if raw_len not in (None, ""):
+            try:
+                claimed = int(raw_len)
+            except (TypeError, ValueError):
+                fail(f"{label}: invalid Content-Length {raw_len!r}")
+            if claimed is not None and claimed < 0:
+                fail(f"{label}: invalid Content-Length {claimed}")
+            if claimed is not None and claimed > max_bytes:
+                fail(
+                    f"{label} Content-Length {claimed} exceeds max {max_bytes} bytes"
+                )
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = response.read(min(READ_CHUNK, max_bytes + 1))
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            fail(f"{label} exceeded {max_bytes} bytes before validation")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def oryx_get_bytes(
+    url: str,
+    timeout: int = 60,
+    max_bytes: int = MAX_FIRMWARE_BYTES,
+    label: str = "Oryx download",
+) -> bytes:
     with oryx_open(url, timeout=timeout) as response:
-        return response.read()
+        return read_bounded(response, max_bytes, label)
 
 
 def oryx_get_json(url: str, timeout: int = 30) -> dict:
-    raw = oryx_get_bytes(url, timeout=timeout)
+    raw = oryx_get_bytes(
+        url, timeout=timeout, max_bytes=MAX_JSON_BYTES, label="Oryx JSON"
+    )
     try:
         data = json.loads(raw.decode())
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -226,7 +282,9 @@ def fetch_latest_revision(layout_id: str, geometry: str = "voyager") -> str:
         log(f"Resolving Oryx revision: {url}")
         try:
             with oryx_open(url, timeout=30, strict=False) as resp:
-                raw = resp.read()
+                raw = read_bounded(
+                    resp, MAX_JSON_BYTES, "Oryx revision lookup", strict=False
+                )
             data = json.loads(raw.decode())
         except urllib.error.HTTPError as exc:
             last_status = exc.code
@@ -235,6 +293,8 @@ def fetch_latest_revision(layout_id: str, geometry: str = "voyager") -> str:
             die(f"Oryx HTTP {exc.code} for {url}")
         except urllib.error.URLError as exc:
             die(f"Oryx request failed: {exc.reason}")
+        except OryxReadError as exc:
+            die(str(exc))
         except (UnicodeDecodeError, json.JSONDecodeError):
             die(f"Oryx returned non-JSON from {url}")
         if not isinstance(data, dict):
@@ -259,12 +319,21 @@ def download_firmware_bytes(revision: str, dest: Path) -> tuple[bytes, Path]:
     dest.parent.mkdir(parents=True, exist_ok=True)
     url = f"{ORYX_API_ORIGIN}/firmware/{revision}"
     log(f"Downloading firmware {revision} …")
-    data = oryx_get_bytes(url, timeout=60)
+    data = oryx_get_bytes(
+        url,
+        timeout=60,
+        max_bytes=MAX_FIRMWARE_BYTES,
+        label="Oryx firmware",
+    )
     if len(data) < MIN_FIRMWARE_BYTES:
         die(f"downloaded firmware looks too small ({len(data)} bytes)")
     partial = dest.with_name(dest.name + ".partial")
-    partial.write_bytes(data)
-    partial.replace(dest)
+    try:
+        partial.write_bytes(data)
+        partial.replace(dest)
+    except OSError:
+        partial.unlink(missing_ok=True)
+        raise
     log(f"  saved {dest} ({len(data)} bytes)")
     log(f"  sha256 {sha256_hex(data)}")
     return data, dest
@@ -744,8 +813,18 @@ def fetch_oryx_layout_title(layout_id: str, geometry: str = "voyager") -> str | 
                 timeout=20,
                 strict=False,
             ) as resp:
-                data = json.loads(resp.read().decode())
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, ValueError):
+                raw = read_bounded(
+                    resp, MAX_JSON_BYTES, "Oryx GraphQL", strict=False
+                )
+                data = json.loads(raw.decode())
+        except (
+            urllib.error.URLError,
+            TimeoutError,
+            json.JSONDecodeError,
+            OSError,
+            ValueError,
+            OryxReadError,
+        ):
             continue
         layout = (data.get("data") or {}).get("layout") or {}
         title = layout.get("title")

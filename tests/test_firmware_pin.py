@@ -74,6 +74,88 @@ class ParseTests(unittest.TestCase):
             "voyager",
         )
 
+    def test_read_bounded_caps_body(self) -> None:
+        class Fake:
+            def __init__(self, data: bytes, length: str | None = None) -> None:
+                self._data = data
+                self._off = 0
+                self.headers = {}
+                if length is not None:
+                    self.headers["Content-Length"] = length
+
+            def read(self, n: int = -1) -> bytes:
+                if self._off >= len(self._data):
+                    return b""
+                if n < 0:
+                    chunk = self._data[self._off :]
+                    self._off = len(self._data)
+                    return chunk
+                chunk = self._data[self._off : self._off + n]
+                self._off += len(chunk)
+                return chunk
+
+        self.assertEqual(vl.read_bounded(Fake(b"abc"), 8, "t"), b"abc")
+        with self.assertRaises(SystemExit):
+            vl.read_bounded(Fake(b"x" * 32), 8, "t")
+        with self.assertRaises(SystemExit):
+            vl.read_bounded(Fake(b"ok", length="99999"), 8, "t")
+        with self.assertRaises(vl.OryxReadError):
+            vl.read_bounded(Fake(b"x" * 32), 8, "t", strict=False)
+
+    def test_large_oryx_body_is_not_fully_read(self) -> None:
+        """HANCORE: unrestricted response.read() let Oryx fill RAM/disk before sha256.
+
+        A 10 MiB firmware (or JSON) body used to be slurped in one read(). The
+        cap must abort after at most max+one chunk, never after consuming the
+        whole stream. Content-Length over the cap must not read any payload.
+        """
+
+        class HugeBody:
+            def __init__(self, total: int, content_length: int | None = None) -> None:
+                self.remaining = total
+                self.served = 0
+                self.unbounded_reads = 0
+                self.headers: dict[str, str] = {}
+                if content_length is not None:
+                    self.headers["Content-Length"] = str(content_length)
+
+            def read(self, n: int = -1) -> bytes:
+                if self.remaining <= 0:
+                    return b""
+                if n < 0:
+                    # Old code path: response.read() with no size.
+                    self.unbounded_reads += 1
+                    n = self.remaining
+                take = min(n, self.remaining)
+                self.remaining -= take
+                self.served += take
+                return b"\xff" * take
+
+        ten_mib = 10 * 1024 * 1024
+
+        firmware = HugeBody(ten_mib)
+        with self.assertRaises(SystemExit):
+            vl.read_bounded(firmware, vl.MAX_FIRMWARE_BYTES, "Oryx firmware")
+        self.assertEqual(firmware.unbounded_reads, 0)
+        self.assertLessEqual(
+            firmware.served, vl.MAX_FIRMWARE_BYTES + vl.READ_CHUNK
+        )
+        self.assertGreater(firmware.served, vl.MAX_FIRMWARE_BYTES)
+        self.assertLess(firmware.served, ten_mib)
+
+        json_body = HugeBody(ten_mib)
+        with self.assertRaises(SystemExit):
+            vl.read_bounded(json_body, vl.MAX_JSON_BYTES, "Oryx GraphQL")
+        self.assertEqual(json_body.unbounded_reads, 0)
+        self.assertLessEqual(json_body.served, vl.MAX_JSON_BYTES + vl.READ_CHUNK)
+        self.assertLess(json_body.served, ten_mib)
+
+        advertised = HugeBody(ten_mib, content_length=ten_mib)
+        with self.assertRaises(SystemExit):
+            vl.read_bounded(advertised, vl.MAX_FIRMWARE_BYTES, "Oryx firmware")
+        self.assertEqual(advertised.served, 0)
+        self.assertEqual(advertised.unbounded_reads, 0)
+
     def test_oryx_url_allowlist(self) -> None:
         vl.assert_oryx_api_url("https://oryx.zsa.io/firmware/abc123")
         vl.assert_oryx_api_url("https://oryx.zsa.io/graphql")
