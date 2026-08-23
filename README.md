@@ -73,25 +73,31 @@ Omarchy’s plugin installer **only clones and enables** the plugin. It does **n
 
 This installs `zsa-zapp` from the AUR (and optionally `dfu-util` from official repos). You may be prompted for a password.
 
-### 3. Configure your layouts
+### 3. Add your layouts
+
+**From the bar (recommended):** plug in the Voyager → click the keyboard icon → **Add from Oryx URL** (at the end of the layout list). A real text field opens in the panel — paste with **Ctrl+V** (or click **Clipboard** after copying the link). Example:
+
+`https://configure.zsa.io/voyager/layouts/xPOwx/latest`
+
+The plugin stores the URL, keeps the path segment as **id**, and looks up the human **name** from Oryx (e.g. “Elixir Development”). Config is written to `~/.config/omarchy-voyager/layouts.toml` (created if missing). In the panel, use the trash control on a row to **remove** a layout.
+
+From **Super+Space → Voyager → Add from Oryx URL**, the same bar panel opens so you can paste with **Ctrl+V**.
+
+**Or from a terminal:**
+
+```bash
+voyager-layout add 'https://configure.zsa.io/voyager/layouts/xPOwx/latest'
+# or, after copying the URL:
+voyager-layout add --clipboard
+```
+
+**Or edit the TOML by hand** (custom names, local `.bin` files):
 
 ```bash
 mkdir -p ~/.config/omarchy-voyager
 cp ~/.config/omarchy/plugins/fram.voyager/config/layouts.toml.example \
    ~/.config/omarchy-voyager/layouts.toml
 ```
-
-Edit `~/.config/omarchy-voyager/layouts.toml`:
-
-1. In [Oryx](https://configure.zsa.io/voyager), open a layout you have **compiled**.
-2. Copy the layout URL, for example:  
-   `https://configure.zsa.io/voyager/layouts/xPOwx/latest`  
-   or a specific revision:  
-   `https://configure.zsa.io/voyager/layouts/xPOwx/PBM6GG`
-3. Replace each `REPLACE_ME…` value with your real URLs.
-4. Set `id` / `name` to whatever you like; `id` is what the CLI and bar use.
-
-Example:
 
 ```toml
 [settings]
@@ -102,16 +108,9 @@ notify = true
 id = "daily"
 name = "Daily"
 oryx = "https://configure.zsa.io/voyager/layouts/YOUR_ID/latest"
-favorite = true
-
-[[layouts]]
-id = "gaming"
-name = "Gaming"
-oryx = "https://configure.zsa.io/voyager/layouts/OTHER_ID/latest"
-favorite = true
 ```
 
-You can also point at a local firmware file instead of (or in addition to) an Oryx URL:
+Local firmware file instead of (or as well as) an Oryx URL:
 
 ```toml
 file = "/home/YOU/.local/share/voyager/gaming.bin"
@@ -137,7 +136,6 @@ See `hypr/bindings.lua.snippet`. Append the bindings you want into `~/.config/hy
 |----------|--------|
 | `Super+Shift+V` | Layout picker, then flash |
 | `Super+Shift+U` | Flash latest revision of what’s on the board (`zapp update`) |
-| `Super+Shift+Alt+V` | Cycle layouts marked `favorite = true` |
 
 Hotkeys **stage** a flash; you still must press **Reset** when prompted.
 
@@ -178,12 +176,14 @@ Keep at least one known-good layout URL in your config so you can recover if a f
 ```bash
 voyager-layout status              # USB mode, current layout, whether Zapp is installed
 voyager-layout list                # Configured layouts
+voyager-layout add <oryx-url>      # Add layout from Oryx URL (name from Oryx title)
+voyager-layout remove <id>         # Remove a layout from the config
+voyager-layout sync-names          # Refresh names from Oryx titles
 voyager-layout flash <id>          # Flash a layout from config (then Reset)
 voyager-layout flash --latest      # Update layout already on the board
 voyager-layout flash <id> --method dfu-util   # Fallback flasher
 voyager-layout open [id]           # Open layout in Oryx
 voyager-layout pick                # Omarchy menu picker, then flash
-voyager-layout cycle-favorites     # Next favorite = true layout
 voyager-layout install-deps        # Install Zapp (AUR)
 voyager-layout install-deps --with-dfu -y
 ```
@@ -203,9 +203,36 @@ State (last flashed id): `~/.local/state/omarchy-voyager/current`
 | `hardware fault or protocol violation` | Unplug/replug to normal mode; direct USB port; Reset only after the waiting line; or `--method dfu-util` |
 | Flash starts with no waiting line | Board was already in bootloader — unplug/replug, then flash again |
 | Layout URL errors | Compile the layout in Oryx first; use `/latest` or a real revision id |
-| Want to remove the plugin | `omarchy plugin disable fram.voyager` then `omarchy plugin remove fram.voyager` |
+| Want to uninstall | See [Remove](#remove) |
 
 Official ZSA flashing docs (for comparison / recovery): [zsa.io/flash](https://zsa.io/flash). This project does not replace Keymapp or ZSA support.
+
+---
+
+## Remove
+
+Disable and uninstall the shell plugin:
+
+```sh
+omarchy plugin disable fram.voyager
+omarchy plugin remove fram.voyager
+```
+
+That removes the checkout under `~/.config/omarchy/plugins/fram.voyager/` and takes the widget off the bar.
+
+Optional cleanup (not deleted by `plugin remove`):
+
+```sh
+# Layout list and last-flashed state
+rm -rf ~/.config/omarchy-voyager ~/.local/state/omarchy-voyager
+
+# CLI symlink, if you created one
+rm -f ~/.local/bin/voyager-layout
+```
+
+Flash tools installed via **Install flash tools** / `voyager-layout install-deps` (`zsa-zapp`, optional `dfu-util`) stay on the system until you uninstall them with your package manager (for example `yay -Rns zsa-zapp`).
+
+If you merged Voyager entries into `~/.config/omarchy/extensions/omarchy-menu.jsonc` or added hotkeys from `hypr/bindings.lua.snippet`, remove those by hand.
 
 ---
 
