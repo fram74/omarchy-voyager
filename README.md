@@ -8,15 +8,11 @@ Use the top-bar keyboard icon (dropdown), the Omarchy menu, optional Hyprland ho
 
 ### Demo — top bar dropdown
 
-<video src="docs/guide/images/topbar-ui.mp4" controls width="100%"></video>
-
-[topbar-ui.mp4](docs/guide/images/topbar-ui.mp4)
+[![Top bar Voyager dropdown demo](docs/guide/images/topbar-ui.jpg)](docs/guide/images/topbar-ui.mp4)
 
 ### Demo — Super+Space menu
 
-<video src="docs/guide/images/super-ui.mp4" controls width="100%"></video>
-
-[super-ui.mp4](docs/guide/images/super-ui.mp4)
+[![Super+Space Voyager menu demo](docs/guide/images/super-ui.jpg)](docs/guide/images/super-ui.mp4)
 
 Full walkthrough: [docs/guide/GUIDE.md](docs/guide/GUIDE.md)
 
