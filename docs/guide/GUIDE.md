@@ -48,12 +48,13 @@ If the keyboard is unplugged, the icon **hides** automatically.
 
 | Row | What it does |
 |-----|----------------|
-| **Daily / Gaming / Coding** (your names) | Flash that Oryx layout. A floating terminal opens; press **Reset** on the Voyager when prompted. |
+| **Layout rows** (Oryx titles) | Flash that layout. A floating terminal opens; press **Reset** when prompted. Trash icon removes it from the config. |
+| **Add from Oryx URL** | Opens a text field — paste with Ctrl+V (or **Clipboard**). Name comes from the Oryx layout title. |
 | **Flash latest revision** | Runs `zapp update` for the layout already on the board. |
 | **Open current in Oryx** | Opens the layout in your browser to edit. |
 | **Install / Reinstall flash tools** | Installs Zapp from the AUR (and optionally `dfu-util`). Required once before the first flash. |
 
-Header shows connection status and the last recorded layout (e.g. `Current · daily`).
+Header shows connection status and the active layout (e.g. `Layout · Elixir Development`).
 
 ---
 
@@ -76,4 +77,11 @@ Full procedure, config (`layouts.toml`), CLI, and recovery tips: **[README](../.
 omarchy plugin add https://github.com/fram74/omarchy-voyager.git --enable
 ```
 
-Then open the bar icon → **Install flash tools** → copy `config/layouts.toml.example` to `~/.config/omarchy-voyager/layouts.toml` and paste your Oryx URLs.
+Then open the bar icon → **Install flash tools** → **Add from Oryx URL** and paste your compiled layout links (or edit `~/.config/omarchy-voyager/layouts.toml` by hand).
+
+Plugin id: `net.moggia.voyager-layouts`
+
+```sh
+omarchy plugin disable net.moggia.voyager-layouts
+omarchy plugin remove net.moggia.voyager-layouts
+```

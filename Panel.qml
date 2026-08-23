@@ -7,8 +7,8 @@ import qs.Commons
 // Dropdown panel anchored under the Voyager bar icon.
 Panel {
   id: root
-  moduleName: "fram.voyager"
-  ipcTarget: "fram.voyager"
+  moduleName: "net.moggia.voyager-layouts"
+  ipcTarget: "net.moggia.voyager-layouts"
   manageIpc: false
 
   property var anchorItem: null
@@ -23,6 +23,9 @@ Panel {
   property int selectedIndex: 0
   property bool cursorActive: false
   property bool refreshPending: false
+  property bool addingUrl: false
+  property string addError: ""
+  property bool addBusy: false
 
   readonly property var barIdentity: hostWidget || root
   readonly property color foreground: bar ? bar.foreground : Color.foreground
@@ -50,6 +53,8 @@ Panel {
   }
 
   function close() {
+    if (root.addingUrl)
+      root.cancelAddUrl()
     root.controller.hide()
   }
 
@@ -76,14 +81,79 @@ Panel {
     listProc.running = true
   }
 
+  function sortLayoutsCurrentFirst(rows) {
+    var current = root.currentId
+    var head = []
+    var tail = []
+    for (var i = 0; i < rows.length; i++) {
+      var row = rows[i]
+      if (row.current || (current !== "" && row.id === current))
+        head.push(row)
+      else
+        tail.push(row)
+    }
+    return head.concat(tail)
+  }
+
   function selectByDelta(delta) {
-    if (layouts.length === 0)
+    if (addingUrl || layouts.length === 0)
       return
     if (!cursorActive) {
       cursorActive = true
       return
     }
     selectedIndex = (selectedIndex + delta + layouts.length) % layouts.length
+  }
+
+  function startAddUrl() {
+    addingUrl = true
+    addError = ""
+    addBusy = false
+    Qt.callLater(function () {
+      if (urlField)
+        urlField.forceActiveFocus()
+    })
+  }
+
+  function cancelAddUrl() {
+    addingUrl = false
+    addError = ""
+    addBusy = false
+    if (urlField)
+      urlField.text = ""
+  }
+
+  function submitAddUrl() {
+    if (addBusy || !urlField)
+      return
+    var url = (urlField.text || "").trim()
+    if (url.length === 0) {
+      addError = "Paste an Oryx layout URL"
+      return
+    }
+    addError = ""
+    addBusy = true
+    addProc.command = [root.resolvedBin, "add", url, "--json"]
+    addProc.running = true
+  }
+
+  function addFromClipboard() {
+    if (addBusy)
+      return
+    addError = ""
+    addBusy = true
+    addingUrl = true
+    addProc.command = [root.resolvedBin, "add", "--clipboard", "--json"]
+    addProc.running = true
+  }
+
+  function removeLayout(layoutId) {
+    if (!layoutId || removeProc.running)
+      return
+    if (layoutId === root.currentId)
+      return
+    removeProc.command = [root.resolvedBin, "remove", layoutId, "--json"]
+    removeProc.running = true
   }
 
   function flashLayout(layoutId) {
@@ -138,6 +208,16 @@ Panel {
     )
   }
 
+  readonly property string selectedLayoutName: {
+    if (currentId === "")
+      return ""
+    for (var i = 0; i < layouts.length; i++) {
+      if (layouts[i].id === currentId)
+        return layouts[i].name || layouts[i].id
+    }
+    return currentId
+  }
+
   readonly property string statusLine: {
     if (mode === "missing")
       return "Disconnected"
@@ -145,9 +225,23 @@ Panel {
       return "Bootloader mode"
     if (!zappInstalled)
       return "Connected · install Zapp to flash"
-    if (currentId !== "")
-      return "Current · " + currentId
+    if (selectedLayoutName !== "")
+      return "Layout · " + selectedLayoutName
     return "Connected · no layout recorded"
+  }
+
+  IpcHandler {
+    target: "net.moggia.voyager-layouts"
+
+    function open(): void { root.openFromHotkey() }
+    function close(): void { root.close() }
+    function show(): void { root.openFromHotkey() }
+    function hide(): void { root.close() }
+    function toggle(): void { root.toggle() }
+    function addUrl(): void {
+      root.openFromHotkey()
+      Qt.callLater(function () { root.startAddUrl() })
+    }
   }
 
   Process {
@@ -160,6 +254,10 @@ Panel {
           root.mode = data.mode || (data.connected ? "normal" : "missing")
           root.currentId = data.current || ""
           root.zappInstalled = !!(data.zapp_installed || data.zapp)
+          if (root.layouts.length > 0) {
+            root.layouts = root.sortLayoutsCurrentFirst(root.layouts.slice())
+            root.selectedIndex = 0
+          }
         } catch (e) {
           root.mode = "missing"
         }
@@ -175,21 +273,53 @@ Panel {
     stdout: StdioCollector {
       onStreamFinished: {
         try {
-          var data = JSON.parse(text)
+          var data = root.sortLayoutsCurrentFirst(JSON.parse(text))
           root.layouts = data
-          var idx = 0
-          for (var i = 0; i < data.length; i++) {
-            if (data[i].id === root.currentId || data[i].current) {
-              idx = i
-              break
-            }
-          }
-          root.selectedIndex = idx
+          root.selectedIndex = 0
         } catch (e) {
           root.layouts = []
         }
         if (root.refreshPending && !statusProc.running)
           root.refresh()
+      }
+    }
+  }
+
+  Process {
+    id: addProc
+    command: [root.resolvedBin, "add", "--json"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        root.addBusy = false
+        try {
+          var data = JSON.parse(text)
+          if (data.error) {
+            root.addError = data.error
+            root.addingUrl = true
+            return
+          }
+          root.cancelAddUrl()
+          root.refresh()
+        } catch (e) {
+          root.addError = "Failed to add layout"
+          root.addingUrl = true
+        }
+      }
+    }
+  }
+
+  Process {
+    id: removeProc
+    command: [root.resolvedBin, "remove", "--json"]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        try {
+          var data = JSON.parse(text)
+          if (data.error)
+            return
+        } catch (e) {
+        }
+        root.refresh()
       }
     }
   }
@@ -207,6 +337,8 @@ Panel {
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
+      // Real TextField must own keys (incl. Ctrl+V paste).
+      blocked: root.addingUrl
       onMoveRequested: function (dx, dy) {
         if (dy !== 0)
           root.selectByDelta(dy)
@@ -306,43 +438,172 @@ Panel {
           width: parent.width
           spacing: Style.space(4)
 
-          Repeater {
-            model: root.layouts
-
-            Button {
-              required property var modelData
-              required property int index
-              width: parent.width
-              iconText: modelData.current || modelData.id === root.currentId ? "󰄬" : "󰌌"
-              text: modelData.name || modelData.id
-              fontSize: Style.font.bodySmall
-              fontFamily: root.fontFamily
-              foreground: root.foreground
-              horizontalPadding: Style.spacing.controlPaddingX
-              verticalPadding: Style.spacing.controlPaddingY + Style.space(2)
-              bordered: true
-              active: modelData.current || modelData.id === root.currentId
-              hasCursor: root.cursorActive && root.selectedIndex === index
-              opacity: root.zappInstalled ? 1.0 : 0.55
-              onClicked: root.flashLayout(modelData.id)
-              onHovered: function (h) {
-                if (h) {
-                  root.cursorActive = true
-                  root.selectedIndex = index
-                }
-              }
-            }
-          }
-
           Text {
-            visible: root.layouts.length === 0
+            visible: root.layouts.length === 0 && !root.addingUrl
             width: parent.width
-            text: "No layouts in ~/.config/omarchy-voyager/layouts.toml"
+            text: "No layouts yet — use Add from Oryx URL below."
             wrapMode: Text.WordWrap
             color: root.foreground
             opacity: 0.6
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
+          }
+
+          Repeater {
+            model: root.layouts
+
+            Row {
+              required property var modelData
+              required property int index
+              width: parent.width
+              spacing: Style.space(6)
+
+              Button {
+                width: parent.width - removeBtn.width - Style.space(6)
+                iconText: modelData.current || modelData.id === root.currentId ? "󰄬" : "󰌌"
+                text: modelData.name || modelData.id
+                fontSize: Style.font.bodySmall
+                fontFamily: root.fontFamily
+                foreground: root.foreground
+                horizontalPadding: Style.spacing.controlPaddingX
+                verticalPadding: Style.spacing.controlPaddingY + Style.space(2)
+                bordered: true
+                active: modelData.current || modelData.id === root.currentId
+                hasCursor: root.cursorActive && !root.addingUrl && root.selectedIndex === index
+                opacity: root.zappInstalled ? 1.0 : 0.55
+                onClicked: root.flashLayout(modelData.id)
+                onHovered: function (h) {
+                  if (h) {
+                    root.cursorActive = true
+                    root.selectedIndex = index
+                  }
+                }
+              }
+
+              Button {
+                id: removeBtn
+                width: Style.space(36)
+                iconText: "󰩹"
+                text: ""
+                fontSize: Style.font.bodySmall
+                fontFamily: root.fontFamily
+                foreground: root.foreground
+                horizontalPadding: Style.spacing.controlPaddingX
+                verticalPadding: Style.spacing.controlPaddingY + Style.space(2)
+                bordered: true
+                enabled: !(modelData.current || modelData.id === root.currentId)
+                opacity: enabled ? 0.75 : 0.28
+                onClicked: root.removeLayout(modelData.id)
+              }
+            }
+          }
+
+          Button {
+            visible: !root.addingUrl
+            width: parent.width
+            iconText: "󰐕"
+            text: "Add from Oryx URL"
+            fontSize: Style.font.bodySmall
+            fontFamily: root.fontFamily
+            foreground: root.foreground
+            horizontalPadding: Style.spacing.controlPaddingX
+            verticalPadding: Style.spacing.controlPaddingY + Style.space(2)
+            bordered: true
+            active: true
+            onClicked: root.startAddUrl()
+          }
+
+          Column {
+            visible: root.addingUrl
+            width: parent.width
+            spacing: Style.space(6)
+
+            Text {
+              width: parent.width
+              text: "Paste a compiled Oryx share link (Ctrl+V). The Oryx layout title is used as the name."
+              wrapMode: Text.WordWrap
+              color: root.foreground
+              opacity: 0.65
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            TextField {
+              id: urlField
+              width: parent.width
+              enabled: !root.addBusy
+              placeholderText: "https://configure.zsa.io/voyager/layouts/…/latest"
+              foreground: root.foreground
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.bodySmall
+              verticalPadding: Style.spacing.controlPaddingY
+
+              Keys.onPressed: function (event) {
+                if (event.key === Qt.Key_Escape) {
+                  root.cancelAddUrl()
+                  event.accepted = true
+                } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                  root.submitAddUrl()
+                  event.accepted = true
+                }
+              }
+            }
+
+            Text {
+              visible: root.addError.length > 0
+              width: parent.width
+              text: root.addError
+              wrapMode: Text.WordWrap
+              color: root.foreground
+              opacity: 0.85
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Row {
+              spacing: Style.space(6)
+              width: parent.width
+
+              Button {
+                width: (parent.width - Style.space(6) * 2) / 3
+                text: root.addBusy ? "…" : "Add"
+                fontSize: Style.font.bodySmall
+                fontFamily: root.fontFamily
+                foreground: root.foreground
+                horizontalPadding: Style.spacing.controlPaddingX
+                verticalPadding: Style.spacing.controlPaddingY + Style.space(2)
+                bordered: true
+                active: true
+                enabled: !root.addBusy
+                onClicked: root.submitAddUrl()
+              }
+
+              Button {
+                width: (parent.width - Style.space(6) * 2) / 3
+                text: "Clipboard"
+                fontSize: Style.font.bodySmall
+                fontFamily: root.fontFamily
+                foreground: root.foreground
+                horizontalPadding: Style.spacing.controlPaddingX
+                verticalPadding: Style.spacing.controlPaddingY + Style.space(2)
+                bordered: true
+                enabled: !root.addBusy
+                onClicked: root.addFromClipboard()
+              }
+
+              Button {
+                width: (parent.width - Style.space(6) * 2) / 3
+                text: "Cancel"
+                fontSize: Style.font.bodySmall
+                fontFamily: root.fontFamily
+                foreground: root.foreground
+                horizontalPadding: Style.spacing.controlPaddingX
+                verticalPadding: Style.spacing.controlPaddingY + Style.space(2)
+                bordered: true
+                enabled: !root.addBusy
+                onClicked: root.cancelAddUrl()
+              }
+            }
           }
         }
 

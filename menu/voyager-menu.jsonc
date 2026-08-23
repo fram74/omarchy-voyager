@@ -12,7 +12,13 @@
     "icon": "󰔡",
     "label": "Pick layout",
     "description": "Choose a layout and flash (press Reset when prompted)",
-    "action": "voyager-layout pick"
+    "action": "bash -lc 'sleep 0.2; voyager-layout pick'"
+  },
+  "voyager.add": {
+    "icon": "󰐕",
+    "label": "Add from Oryx URL",
+    "description": "Open the Voyager panel to paste an Oryx share link",
+    "action": "bash -lc 'sleep 0.15; omarchy-shell -q net.moggia.voyager-layouts addUrl'"
   },
   "voyager.flash-latest": {
     "icon": "󰚰",
@@ -30,11 +36,6 @@
     "icon": "󰋼",
     "label": "Status",
     "action": "omarchy-launch-floating-terminal-with-presentation 'voyager-layout status; read -k 1'"
-  },
-  "voyager.cycle": {
-    "icon": "󰑖",
-    "label": "Cycle favorites",
-    "action": "voyager-layout cycle-favorites"
   },
   "voyager.install-deps": {
     "icon": "󰏖",

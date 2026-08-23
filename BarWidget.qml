@@ -7,9 +7,10 @@ import qs.Commons
 // Voyager Oryx profile indicator (not xkb — see omarchy.keyboard-layout for that).
 BarWidget {
   id: root
-  moduleName: "fram.voyager"
+  moduleName: "net.moggia.voyager-layouts"
 
   property string layoutId: ""
+  property string layoutName: ""
   property string mode: "missing"
   property bool zappInstalled: false
   property bool refreshPending: false
@@ -114,6 +115,7 @@ BarWidget {
           var data = JSON.parse(text)
           root.mode = data.mode || (data.connected ? "normal" : "missing")
           root.layoutId = data.current || ""
+          root.layoutName = data.current_name || data.current || ""
           root.zappInstalled = !!(data.zapp_installed || data.zapp)
           if (panelLoader.item) {
             panelLoader.item.mode = root.mode
@@ -123,7 +125,6 @@ BarWidget {
         } catch (e) {
           root.mode = "missing"
         }
-        root.statusReady = true
         if (root.refreshPending)
           root.refresh()
       }
@@ -151,7 +152,8 @@ BarWidget {
     slotSize: Style.bar.iconSlot
     tooltipText: root.opened ? "" : (
       root.mode === "bootloader" ? "Voyager in bootloader"
-        : ("Voyager · " + (root.layoutId !== "" ? root.layoutId : "click for layouts"))
+        : (root.layoutName !== "" ? ("Layout · " + root.layoutName)
+          : "Voyager · click for layouts")
     )
 
     onPressed: function (b) {

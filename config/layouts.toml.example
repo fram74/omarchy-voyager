@@ -15,7 +15,6 @@ notify = true
 id = "daily"
 name = "Daily"
 oryx = "https://configure.zsa.io/voyager/layouts/REPLACE_ME/latest"
-favorite = true
 # Optional documented hotkey (wire in hypr/bindings.lua.snippet):
 # hotkey = "SUPER + SHIFT + F1"
 
@@ -23,7 +22,6 @@ favorite = true
 id = "gaming"
 name = "Gaming"
 oryx = "https://configure.zsa.io/voyager/layouts/REPLACE_ME_TOO/latest"
-favorite = true
 
 [[layouts]]
 id = "coding"

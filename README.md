@@ -68,7 +68,7 @@ Omarchy’s plugin installer **only clones and enables** the plugin. It does **n
 
 ```bash
 # After the plugin is installed, either use the PATH link below, or:
-~/.config/omarchy/plugins/fram.voyager/bin/voyager-layout install-deps --with-dfu
+~/.config/omarchy/plugins/net.moggia.voyager-layouts/bin/voyager-layout install-deps --with-dfu
 ```
 
 This installs `zsa-zapp` from the AUR (and optionally `dfu-util` from official repos). You may be prompted for a password.
@@ -95,7 +95,7 @@ voyager-layout add --clipboard
 
 ```bash
 mkdir -p ~/.config/omarchy-voyager
-cp ~/.config/omarchy/plugins/fram.voyager/config/layouts.toml.example \
+cp ~/.config/omarchy/plugins/net.moggia.voyager-layouts/config/layouts.toml.example \
    ~/.config/omarchy-voyager/layouts.toml
 ```
 
@@ -119,13 +119,13 @@ file = "/home/YOU/.local/share/voyager/gaming.bin"
 ### 4. Optional: CLI on your PATH
 
 ```bash
-ln -sfn ~/.config/omarchy/plugins/fram.voyager/bin/voyager-layout ~/.local/bin/voyager-layout
+ln -sfn ~/.config/omarchy/plugins/net.moggia.voyager-layouts/bin/voyager-layout ~/.local/bin/voyager-layout
 ```
 
 ### 5. Optional: Omarchy menu entries
 
 Merge the keys from  
-`~/.config/omarchy/plugins/fram.voyager/menu/voyager-menu.jsonc`  
+`~/.config/omarchy/plugins/net.moggia.voyager-layouts/menu/voyager-menu.jsonc`  
 into `~/.config/omarchy/extensions/omarchy-menu.jsonc` (or run `./scripts/install.sh` from a git checkout, which can help with a fresh setup).
 
 ### 6. Optional: Hyprland hotkeys
@@ -214,11 +214,11 @@ Official ZSA flashing docs (for comparison / recovery): [zsa.io/flash](https://z
 Disable and uninstall the shell plugin:
 
 ```sh
-omarchy plugin disable fram.voyager
-omarchy plugin remove fram.voyager
+omarchy plugin disable net.moggia.voyager-layouts
+omarchy plugin remove net.moggia.voyager-layouts
 ```
 
-That removes the checkout under `~/.config/omarchy/plugins/fram.voyager/` and takes the widget off the bar.
+That removes the checkout under `~/.config/omarchy/plugins/net.moggia.voyager-layouts/` and takes the widget off the bar.
 
 Optional cleanup (not deleted by `plugin remove`):
 

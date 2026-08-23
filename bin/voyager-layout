@@ -54,8 +54,8 @@ def load_config() -> dict:
     with CONFIG_PATH.open("rb") as f:
         data = tomllib.load(f)
     layouts = data.get("layouts") or []
-    if not isinstance(layouts, list) or not layouts:
-        die("config has no [[layouts]] entries")
+    if not isinstance(layouts, list):
+        die("config [[layouts]] must be a list")
     for i, layout in enumerate(layouts):
         if "id" not in layout:
             die(f"layouts[{i}] missing id")
@@ -147,21 +147,17 @@ def cmd_list(cfg: dict, as_json: bool) -> None:
                 "name": layout.get("name", layout["id"]),
                 "oryx": layout.get("oryx"),
                 "file": layout.get("file"),
-                "favorite": bool(layout.get("favorite")),
                 "current": layout["id"] == current,
             }
         )
+    # Selected / current layout always first; others keep config order.
+    rows.sort(key=lambda row: (0 if row["current"] else 1))
     if as_json:
         print(json.dumps(rows, indent=2))
         return
     for row in rows:
-        marks = []
-        if row["current"]:
-            marks.append("*")
-        if row["favorite"]:
-            marks.append("fav")
-        suffix = f" [{', '.join(marks)}]" if marks else ""
-        print(f"{row['id']:16}  {row['name']}{suffix}")
+        mark = " *" if row["current"] else ""
+        print(f"{row['id']:16}  {row['name']}{mark}")
 
 
 def cmd_status(cfg: dict, as_json: bool) -> None:
@@ -170,10 +166,19 @@ def cmd_status(cfg: dict, as_json: bool) -> None:
     zapp = shutil.which("zapp")
     dfu = shutil.which("dfu-util")
     default = (cfg.get("settings") or {}).get("default")
+    current_name = None
+    if current:
+        for layout in cfg.get("layouts") or []:
+            if layout.get("id") == current:
+                current_name = layout.get("name") or current
+                break
+        if current_name is None:
+            current_name = current
     info = {
         "connected": mode != "missing",
         "mode": mode,
         "current": current,
+        "current_name": current_name,
         "default": default,
         "zapp": zapp,
         "zapp_installed": bool(zapp),
@@ -189,7 +194,10 @@ def cmd_status(cfg: dict, as_json: bool) -> None:
         return
     print(f"config:    {CONFIG_PATH}")
     print(f"connected: {'yes' if mode != 'missing' else 'no'} (mode: {mode})")
-    print(f"current:   {current or '(none recorded)'}")
+    if current_name and current_name != current:
+        print(f"current:   {current_name} ({current})")
+    else:
+        print(f"current:   {current or '(none recorded)'}")
     print(f"default:   {default or '(unset)'}")
     print(f"zapp:      {zapp or 'NOT FOUND — run: voyager-layout install-deps'}")
     print(f"dfu-util:  {dfu or 'optional — included by install-deps --with-dfu'}")
@@ -283,6 +291,328 @@ def parse_oryx_layout_id(url: str) -> str | None:
         return parts[i + 1]
     except (ValueError, IndexError):
         return None
+
+
+def normalize_oryx_url(url: str) -> tuple[str, str]:
+    """Return (layout_id, normalized …/layouts/<id>/latest URL)."""
+    raw = (url or "").strip()
+    if not raw:
+        die("pass an Oryx layout URL")
+    if "REPLACE_ME" in raw:
+        die("URL still contains REPLACE_ME — paste a real Oryx share link")
+    lowered = raw.lower()
+    if "voyager/layouts" not in lowered and "/voyager/layouts/" not in lowered:
+        # Also accept path-only pastes that still contain layouts/<id>
+        if "configure.zsa.io" in lowered and "/voyager/" not in lowered:
+            die("expected a Voyager Oryx URL (configure.zsa.io/voyager/layouts/…)")
+    layout_id = parse_oryx_layout_id(raw)
+    if not layout_id or layout_id in ("latest", "0"):
+        die(
+            "could not parse layout id from URL\n"
+            "  expected: https://configure.zsa.io/voyager/layouts/<id>/latest"
+        )
+    if not all(c.isalnum() or c in "-_" for c in layout_id):
+        die(f"invalid layout id in URL: {layout_id!r}")
+    oryx = f"https://configure.zsa.io/voyager/layouts/{layout_id}/latest"
+    return layout_id, oryx
+
+
+def _toml_escape(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def format_layout_block(layout_id: str, name: str, oryx: str) -> str:
+    lid = _toml_escape(layout_id)
+    return (
+        f"[[layouts]]\n"
+        f'id = "{lid}"\n'
+        f'name = "{_toml_escape(name)}"\n'
+        f'oryx = "{_toml_escape(oryx)}"\n'
+    )
+
+
+def write_new_config(layout_id: str, name: str, oryx: str) -> None:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    body = (
+        "# Managed by voyager-layout (add from the bar or CLI).\n"
+        "# You can still edit this file by hand.\n\n"
+        "[settings]\n"
+        f'default = "{_toml_escape(layout_id)}"\n'
+        "notify = true\n\n"
+        f"{format_layout_block(layout_id, name, oryx)}"
+    )
+    CONFIG_PATH.write_text(body, encoding="utf-8")
+
+
+def write_config(cfg: dict) -> None:
+    """Rewrite layouts.toml from a loaded config dict (comments are not preserved)."""
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    settings = cfg.get("settings") or {}
+    lines = [
+        "# Managed by voyager-layout (add from the bar or CLI).\n",
+        "# You can still edit this file by hand.\n",
+        "\n",
+        "[settings]\n",
+    ]
+    default = settings.get("default")
+    if default:
+        lines.append(f'default = "{_toml_escape(str(default))}"\n')
+    notify = settings.get("notify", True)
+    lines.append(f"notify = {'true' if notify else 'false'}\n")
+    lines.append("\n")
+    for layout in cfg.get("layouts") or []:
+        lid = layout["id"]
+        name = layout.get("name", lid)
+        lines.append("[[layouts]]\n")
+        lines.append(f'id = "{_toml_escape(str(lid))}"\n')
+        lines.append(f'name = "{_toml_escape(str(name))}"\n')
+        if layout.get("oryx"):
+            lines.append(f'oryx = "{_toml_escape(str(layout["oryx"]))}"\n')
+        if layout.get("file"):
+            lines.append(f'file = "{_toml_escape(str(layout["file"]))}"\n')
+        lines.append("\n")
+    CONFIG_PATH.write_text("".join(lines), encoding="utf-8")
+
+
+def append_layout(layout_id: str, name: str, oryx: str) -> None:
+    text = CONFIG_PATH.read_text(encoding="utf-8") if CONFIG_PATH.is_file() else ""
+    if text and not text.endswith("\n"):
+        text += "\n"
+    if text and not text.endswith("\n\n"):
+        text += "\n"
+    text += format_layout_block(layout_id, name, oryx)
+    if not text.endswith("\n"):
+        text += "\n"
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    CONFIG_PATH.write_text(text, encoding="utf-8")
+
+
+def fetch_oryx_layout_title(layout_id: str, geometry: str = "voyager") -> str | None:
+    """Return the human title from Oryx GraphQL, or None on failure."""
+    import urllib.error
+    import urllib.request
+
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "omarchy-voyager/0.0.1 (https://github.com/fram74/omarchy-voyager)",
+        "Origin": "https://configure.zsa.io",
+        "Referer": f"https://configure.zsa.io/{geometry}/layouts/{layout_id}/latest",
+    }
+    queries = [
+        {
+            "query": (
+                "query($hashId: String!, $geometry: String!) {"
+                "  layout(hashId: $hashId, geometry: $geometry, revisionId: \"latest\") {"
+                "    title"
+                "  }"
+                "}"
+            ),
+            "variables": {"hashId": layout_id, "geometry": geometry},
+        },
+        {
+            "query": (
+                "{ layout(hashId: \"%s\", geometry: \"%s\", revisionId: \"latest\")"
+                " { title } }" % (layout_id.replace('"', ""), geometry.replace('"', ""))
+            )
+        },
+    ]
+    for body in queries:
+        req = urllib.request.Request(
+            "https://oryx.zsa.io/graphql",
+            data=json.dumps(body).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                data = json.loads(resp.read().decode())
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+            continue
+        layout = (data.get("data") or {}).get("layout") or {}
+        title = layout.get("title")
+        if isinstance(title, str):
+            title = title.strip()
+            if title:
+                return title
+    return None
+
+
+def load_config_optional() -> dict:
+    """Load config or return empty structure if the file is missing."""
+    if not CONFIG_PATH.is_file():
+        return {"layouts": [], "settings": {}}
+    return load_config()
+
+
+def read_clipboard_text() -> str:
+    for cmd in (
+        ["wl-paste", "--no-newline"],
+        ["wl-paste"],
+        ["xclip", "-selection", "clipboard", "-o"],
+        ["xsel", "--clipboard", "--output"],
+    ):
+        if not shutil.which(cmd[0]):
+            continue
+        try:
+            out = subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL)
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+        text = (out or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def prompt_oryx_url() -> str:
+    """Ask for an Oryx URL on a TTY (Ctrl+Shift+V paste in the terminal)."""
+    print("Paste a compiled Oryx share URL, then Enter.")
+    print("(In the terminal, paste with Ctrl+Shift+V.)")
+    print("Example: https://configure.zsa.io/voyager/layouts/<id>/latest")
+    try:
+        return input("Oryx URL: ").strip()
+    except EOFError:
+        return ""
+
+
+def cmd_add(url: str, as_json: bool) -> None:
+    def fail(msg: str) -> None:
+        if as_json:
+            print(json.dumps({"error": msg}))
+        else:
+            print(f"{APP}: {msg}", file=sys.stderr)
+        raise SystemExit(1)
+
+    raw = (url or "").strip()
+    if not raw:
+        fail("pass an Oryx layout URL")
+    if "REPLACE_ME" in raw:
+        fail("URL still contains REPLACE_ME — paste a real Oryx share link")
+    lowered = raw.lower()
+    if "configure.zsa.io" in lowered and "/voyager/" not in lowered:
+        fail("expected a Voyager Oryx URL (configure.zsa.io/voyager/layouts/…)")
+    layout_id = parse_oryx_layout_id(raw)
+    if not layout_id or layout_id in ("latest", "0"):
+        fail(
+            "could not parse layout id from URL "
+            "(expected …/voyager/layouts/<id>/latest)"
+        )
+    if not all(c.isalnum() or c in "-_" for c in layout_id):
+        fail(f"invalid layout id in URL: {layout_id!r}")
+    oryx = f"https://configure.zsa.io/voyager/layouts/{layout_id}/latest"
+    oryx_title = fetch_oryx_layout_title(layout_id)
+    name = oryx_title or layout_id
+
+    created = False
+    if not CONFIG_PATH.is_file():
+        write_new_config(layout_id, name, oryx)
+        created = True
+    else:
+        cfg = load_config_optional()
+        existing = next((l for l in cfg["layouts"] if l.get("id") == layout_id), None)
+        if existing is not None:
+            existing["oryx"] = oryx
+            existing["name"] = name
+            write_config(cfg)
+        else:
+            append_layout(layout_id, name, oryx)
+            created = True
+
+    info = {
+        "id": layout_id,
+        "name": name,
+        "oryx": oryx,
+        "created": created,
+        "config": str(CONFIG_PATH),
+        "name_from_oryx": bool(oryx_title),
+    }
+    if as_json:
+        print(json.dumps(info, indent=2))
+        return
+    action = "added" if created else "updated"
+    print(f"ok — {action} layout {name!r} ({layout_id})")
+    if not oryx_title:
+        print("  note:    Oryx title unavailable (private layout or network) — using id")
+    print(f"  oryx:   {oryx}")
+    print(f"  config: {CONFIG_PATH}")
+
+
+def cmd_remove(layout_id: str, as_json: bool) -> None:
+    def fail(msg: str) -> None:
+        if as_json:
+            print(json.dumps({"error": msg}))
+        else:
+            print(f"{APP}: {msg}", file=sys.stderr)
+        raise SystemExit(1)
+
+    layout_id = (layout_id or "").strip()
+    if not layout_id:
+        fail("pass a layout id to remove")
+    if not CONFIG_PATH.is_file():
+        fail(f"missing config {CONFIG_PATH}")
+
+    cfg = load_config()
+    current = get_current()
+    if current and layout_id == current:
+        fail(f"cannot remove {layout_id!r} — it is the layout in use")
+
+    before = len(cfg["layouts"])
+    cfg["layouts"] = [l for l in cfg["layouts"] if l.get("id") != layout_id]
+    if len(cfg["layouts"]) == before:
+        fail(f"unknown layout id {layout_id!r}")
+
+    settings = cfg.setdefault("settings", {})
+    if settings.get("default") == layout_id:
+        settings["default"] = cfg["layouts"][0]["id"] if cfg["layouts"] else ""
+        if not settings["default"]:
+            settings.pop("default", None)
+
+    if not cfg["layouts"]:
+        # Keep a valid empty-ish file rather than deleting config entirely.
+        write_config(cfg)
+    else:
+        write_config(cfg)
+
+    if get_current() == layout_id:
+        if STATE_CURRENT.is_file():
+            STATE_CURRENT.unlink()
+
+    info = {
+        "removed": layout_id,
+        "remaining": [l["id"] for l in cfg["layouts"]],
+        "config": str(CONFIG_PATH),
+    }
+    if as_json:
+        print(json.dumps(info, indent=2))
+        return
+    print(f"ok — removed layout {layout_id!r}")
+    print(f"  config: {CONFIG_PATH}")
+
+
+def cmd_sync_names(as_json: bool) -> None:
+    """Refresh layout names from Oryx titles (uses hash from oryx URL when present)."""
+    cfg = load_config()
+    updated = []
+    for layout in cfg["layouts"]:
+        lid = layout["id"]
+        hash_id = parse_oryx_layout_id(str(layout.get("oryx") or "")) or lid
+        title = fetch_oryx_layout_title(hash_id)
+        if title and title != layout.get("name"):
+            layout["name"] = title
+            updated.append({"id": lid, "name": title, "hash": hash_id})
+        elif not layout.get("name"):
+            layout["name"] = lid
+    write_config(cfg)
+    info = {"updated": updated, "config": str(CONFIG_PATH)}
+    if as_json:
+        print(json.dumps(info, indent=2))
+        return
+    if not updated:
+        print("ok — names already up to date")
+    else:
+        print(f"ok — updated {len(updated)} name(s)")
+        for row in updated:
+            print(f"  {row['id']} → {row['name']}")
 
 
 def fetch_latest_revision(layout_id: str) -> str:
@@ -480,11 +810,14 @@ def cmd_pick(cfg: dict, method: str = "zapp") -> None:
     """Interactive pick via Omarchy menu (or fuzzel/rofi fallback), then flash."""
     # Options for omarchy-menu-select: optional "glyph<TAB>label" or
     # "glyph<TAB>label<TAB>subtext". Subtext is returned as stable key.
+    current = get_current()
     options: list[str] = []
     for layout in cfg["layouts"]:
         name = layout.get("name", layout["id"])
-        # icon TAB visible name TAB id (id comes back for flashing)
-        options.append(f"󰌌\t{name}\t{layout['id']}")
+        lid = layout["id"]
+        # Checkmark for the layout in use; keyboard for the rest.
+        glyph = "󰄬" if lid == current else "󰌌"
+        options.append(f"{glyph}\t{name}\t{lid}")
 
     choice = None
 
@@ -546,19 +879,6 @@ def cmd_pick(cfg: dict, method: str = "zapp") -> None:
     cmd_flash(cfg, choice, latest=False, method=method)
 
 
-def cmd_cycle_favorites(cfg: dict) -> None:
-    favs = [l["id"] for l in cfg["layouts"] if l.get("favorite")]
-    if not favs:
-        die("no layouts marked favorite = true")
-    current = get_current()
-    if current in favs:
-        nxt = favs[(favs.index(current) + 1) % len(favs)]
-    else:
-        nxt = favs[0]
-    print(f"cycling favorites → {nxt}")
-    cmd_flash(cfg, nxt, latest=False, method="zapp")
-
-
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog=APP,
@@ -590,7 +910,6 @@ def build_parser() -> argparse.ArgumentParser:
     open_p.add_argument("id", nargs="?", help="Layout id (default: current/default)")
 
     sub.add_parser("pick", help="Picker UI then flash")
-    sub.add_parser("cycle-favorites", help="Flash next favorite layout")
 
     deps = sub.add_parser(
         "install-deps",
@@ -607,13 +926,40 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Do not prompt for confirmation",
     )
+
+    add_p = sub.add_parser(
+        "add",
+        help="Add a layout from an Oryx URL (id/name taken from the URL)",
+    )
+    add_p.add_argument(
+        "url",
+        nargs="?",
+        help="Oryx URL, e.g. https://configure.zsa.io/voyager/layouts/<id>/latest",
+    )
+    add_p.add_argument(
+        "--clipboard",
+        "-c",
+        action="store_true",
+        help="Read the Oryx URL from the clipboard (wl-paste)",
+    )
+    add_p.add_argument("--json", action="store_true")
+
+    rm_p = sub.add_parser("remove", help="Remove a layout from the config")
+    rm_p.add_argument("id", help="Layout id to remove")
+    rm_p.add_argument("--json", action="store_true")
+
+    sync_p = sub.add_parser(
+        "sync-names",
+        help="Refresh layout display names from Oryx titles",
+    )
+    sync_p.add_argument("--json", action="store_true")
     return p
 
 
 def main(argv: list[str] | None = None) -> None:
     args = build_parser().parse_args(argv)
 
-    # status / install-deps work even before layouts.toml exists
+    # status / install-deps / add work even before layouts.toml exists
     if args.cmd == "status":
         cfg: dict = {"layouts": [], "settings": {}}
         if CONFIG_PATH.is_file():
@@ -625,17 +971,55 @@ def main(argv: list[str] | None = None) -> None:
         cmd_install_deps(with_dfu=args.with_dfu, yes=args.yes)
         return
 
-    cfg = load_config()
+    if args.cmd == "add":
+        url = args.url
+        if args.clipboard:
+            url = read_clipboard_text()
+            if not url:
+                if args.json:
+                    print(json.dumps({"error": "clipboard is empty — copy an Oryx URL first"}))
+                    raise SystemExit(1)
+                die("clipboard is empty — copy an Oryx URL first")
+        if not url:
+            if args.json:
+                print(json.dumps({"error": "pass an Oryx URL, or use --clipboard"}))
+                raise SystemExit(1)
+            if not sys.stdin.isatty():
+                die("pass an Oryx URL, or run in a terminal to paste one")
+            url = prompt_oryx_url()
+            if not url:
+                die("no URL entered")
+        cmd_add(url, args.json)
+        return
+
+    if args.cmd == "remove":
+        cmd_remove(args.id, args.json)
+        return
+
+    if args.cmd == "sync-names":
+        cmd_sync_names(args.json)
+        return
+
     if args.cmd == "list":
-        cmd_list(cfg, args.json)
-    elif args.cmd == "flash":
+        if not CONFIG_PATH.is_file():
+            if args.json:
+                print("[]")
+                return
+            die(
+                f"missing config {CONFIG_PATH}\n"
+                f"  Add a layout from the bar, or:\n"
+                f"  mkdir -p {CONFIG_DIR} && cp {EXAMPLE_CONFIG} {CONFIG_PATH}"
+            )
+        cmd_list(load_config(), args.json)
+        return
+
+    cfg = load_config()
+    if args.cmd == "flash":
         cmd_flash(cfg, args.id, args.latest, args.method)
     elif args.cmd == "open":
         cmd_open(cfg, args.id)
     elif args.cmd == "pick":
         cmd_pick(cfg)
-    elif args.cmd == "cycle-favorites":
-        cmd_cycle_favorites(cfg)
     else:
         die(f"unknown command {args.cmd}")
 
