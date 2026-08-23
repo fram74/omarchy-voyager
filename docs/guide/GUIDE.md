@@ -52,32 +52,58 @@ If the keyboard is unplugged, the icon **hides** automatically.
 | **Add from Oryx URL** | Opens a text field — paste with Ctrl+V (or **Clipboard**). Pins the compiled image by SHA-256. Name comes from the Oryx layout title. |
 | **Re-pin & flash latest** | Re-pin the current layout to Oryx latest, verify SHA-256, then flash. |
 | **Open current in Oryx** | Opens the layout in your browser to edit. |
-| **Install / Reinstall flash tools** | Installs Zapp from the AUR (and optionally `dfu-util`). Required once before the first flash. |
+| **Install flash tools** | Shown when Zapp is missing. Tap it in the dropdown — do not run a terminal install unless you want to. |
+| **Reinstall / check flash tools** | Same action after Zapp is already installed. |
 
-Header shows connection status and the active layout (e.g. `Layout · Elixir Development`).
+Header shows connection status and the active layout (e.g. `Layout · Elixir Development`). If flash tools are missing, the header says `Connected · install Zapp to flash` and layout rows stay dimmed until you use the button.
 
 ---
 
-## 4. Flashing (short version)
+## 4. Install flash tools (once, from the dropdown)
 
-1. Keys must work (**normal** mode). If unsure: unplug → wait 5s → plug in directly (no hub).
-2. Pick a layout from the dropdown or Super+Space menu.
-3. In the floating terminal, wait for:  
+Omarchy’s plugin adder only clones this repo. It does **not** install Zapp. You do that from the **same dropdown**, not from a command you have to copy.
+
+1. Plug in the Voyager so the keyboard icon appears.
+2. **Left-click** the icon.
+3. Tap **Install flash tools**.
+4. A floating terminal installs `zsa-zapp` from the AUR (and `dfu-util`). A sudo/password prompt is normal.
+5. When it finishes, the panel reloads; layout rows become usable.
+
+You only need this once. Later, **Reinstall / check flash tools** is at the bottom of the dropdown if something is missing.
+
+The CLI (`voyager-layout install-deps`) is optional and documented in the [README](../../README.md).
+
+---
+
+## 5. Add layouts (from the dropdown)
+
+Still in the bar dropdown: **Add from Oryx URL**. Paste a compiled share link with **Ctrl+V** (or **Clipboard**). The plugin pins that firmware (revision + SHA-256) into `~/.config/omarchy-voyager/layouts.toml`.
+
+---
+
+## 6. Flashing (short version)
+
+1. Flash tools installed (section 4) and at least one layout added (section 5).
+2. Keys must work (**normal** mode). If unsure: unplug → wait 5s → plug in directly (no hub).
+3. Pick a layout **from the dropdown** (or Super+Space).
+4. In the floating terminal, wait for:  
    `Waiting for keyboard in bootloader mode...`
-4. Press the Voyager **Reset** button **once**.
-5. Wait until flashing finishes.
+5. Press the Voyager **Reset** button **once**.
+6. Wait until flashing finishes.
 
 Full procedure, config (`layouts.toml`), CLI, and recovery tips: **[README](../../README.md)**.
 
 ---
 
-## 5. Install this plugin
+## 7. Install this plugin
+
+The only command most people need:
 
 ```bash
 omarchy plugin add https://github.com/fram74/omarchy-voyager.git --enable
 ```
 
-Then open the bar icon → **Install flash tools** → **Add from Oryx URL** and paste your compiled layout links (or edit `~/.config/omarchy-voyager/layouts.toml` by hand).
+Then stay on the bar: icon → **Install flash tools** → **Add from Oryx URL** → tap a layout to flash.
 
 Plugin id: `net.moggia.voyager-layouts`
 
@@ -88,6 +114,6 @@ omarchy plugin remove net.moggia.voyager-layouts
 
 ---
 
-## 6. Developer testing
+## 8. Developer testing
 
 Validate, load a local checkout, CLI tests, and a live-UI checklist: **[TESTING.md](TESTING.md)**.

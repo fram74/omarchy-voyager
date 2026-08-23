@@ -63,16 +63,15 @@ Omarchy’s plugin installer **only clones and enables** the plugin. It does **n
 
 ### 2. Install flash tools (required once)
 
-**From the bar (recommended):** plug in the Voyager → click the keyboard icon → **Install flash tools**.
+Do this from the **top-bar dropdown**, not a command:
 
-**Or from a terminal:**
+1. Plug in the Voyager so the keyboard icon appears.
+2. Left-click the icon.
+3. Tap **Install flash tools**.
 
-```bash
-# After the plugin is installed, either use the PATH link below, or:
-~/.config/omarchy/plugins/net.moggia.voyager-layouts/bin/voyager-layout install-deps --with-dfu
-```
+Omarchy cannot install packages when you add a plugin, so the dropdown shows this button until Zapp is present. Layout rows stay dimmed until then. A floating terminal runs the AUR install; a password prompt is normal.
 
-This installs `zsa-zapp` from the AUR (and optionally `dfu-util` from official repos). You may be prompted for a password.
+Optional CLI (only if you already use the terminal): `voyager-layout install-deps --with-dfu` — or the copy under `~/.config/omarchy/plugins/net.moggia.voyager-layouts/bin/` if it is not on your PATH.
 
 ### 3. Add your layouts
 
@@ -226,7 +225,7 @@ State (last flashed id): `~/.local/state/omarchy-voyager/current`
 |---------|-------------|
 | No bar icon | Plug in the Voyager; wait a few seconds; `omarchy restart shell` |
 | Click does nothing / no dropdown | `omarchy restart shell` (rescan alone does not reload bar QML) |
-| “zapp not found” | Bar → **Install flash tools**, or `voyager-layout install-deps` |
+| “zapp not found” | Bar icon → **Install flash tools** (CLI: `voyager-layout install-deps`) |
 | `hardware fault or protocol violation` | Unplug/replug to normal mode; direct USB port; Reset only after the waiting line; or `--method dfu-util` |
 | Flash starts with no waiting line | Board was already in bootloader — unplug/replug, then flash again |
 | Layout URL errors | Compile the layout in Oryx first, then `voyager-layout add` or `pin` |
