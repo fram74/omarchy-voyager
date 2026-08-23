@@ -1,19 +1,29 @@
 # Visual guide — Omarchy Voyager Layouts
 
-Demo captured on an **external monitor** (empty wallpaper workspace) with a ZSA Voyager connected, so no personal app windows appear.  
+Demos captured on an **external monitor** (empty wallpaper workspace) with a ZSA Voyager connected, so no personal app windows appear.  
 Plugin version **0.0.1**. For install details, legal disclaimer, and troubleshooting, see the [main README](../../README.md).
 
 > **Unofficial.** Not affiliated with ZSA Technology Labs. Flashing firmware is at your own risk.
 
 ---
 
-## Demo
+## Demo — top bar dropdown
 
-Bar icon dropdown and **Super+Space** launcher (Omarchy Voyager Layouts):
+**Left-click** the keyboard icon on the Omarchy top bar:
 
-<video src="images/voyager-ui-demo.mp4" controls width="100%"></video>
+<video src="images/topbar-ui.mp4" controls width="100%"></video>
 
-[Open the demo video](images/voyager-ui-demo.mp4)
+[Open topbar-ui.mp4](images/topbar-ui.mp4)
+
+---
+
+## Demo — Super+Space menu
+
+**Super+Space** → *Omarchy Voyager Layouts*:
+
+<video src="images/super-ui.mp4" controls width="100%"></video>
+
+[Open super-ui.mp4](images/super-ui.mp4)
 
 ---
 
@@ -26,8 +36,6 @@ If the keyboard is unplugged, the icon **hides** automatically.
 ---
 
 ## 2. Open the UI
-
-Two ways (both shown in the demo above):
 
 | How | What you get |
 |-----|----------------|
