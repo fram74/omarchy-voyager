@@ -22,8 +22,8 @@
   },
   "voyager.flash-latest": {
     "icon": "󰚰",
-    "label": "Flash latest revision",
-    "description": "zapp update for the layout already on the board",
+    "label": "Re-pin & flash latest",
+    "description": "Re-pin current layout to Oryx latest, verify SHA-256, then flash",
     "action": "voyager-layout flash --latest"
   },
   "voyager.open": {

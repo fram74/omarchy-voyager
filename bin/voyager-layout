@@ -4,15 +4,22 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
 import tomllib
+import urllib.error
+import urllib.request
 from pathlib import Path
+from urllib.parse import urlparse
 
 APP = "voyager-layout"
+APP_VERSION = "0.2.0"
+USER_AGENT = f"omarchy-voyager/{APP_VERSION} (https://github.com/fram74/omarchy-voyager)"
 # Plugin / repo root (parent of bin/)
 REPO_ROOT = Path(__file__).resolve().parent.parent
 EXAMPLE_CONFIG = REPO_ROOT / "config" / "layouts.toml.example"
@@ -28,6 +35,12 @@ VOYAGER_PIDS_NORMAL = ("1977", "1978")
 VOYAGER_PIDS_BOOTLOADER = ("0791", "1791")
 # Ignition STM32 flash base (Zapp uses this for 3297:0791)
 IGNITION_FLASH_ADDR = "0x08002000"
+ORYX_API_HOST = "oryx.zsa.io"
+ORYX_API_ORIGIN = f"https://{ORYX_API_HOST}"
+CONFIGURE_ORIGIN = "https://configure.zsa.io"
+# Compiled Voyager images are tens of KiB; this is a floor, not a substitute for sha256.
+MIN_FIRMWARE_BYTES = 8192
+SHA256_HEX_LEN = 64
 
 
 def die(msg: str, code: int = 1) -> None:
@@ -42,6 +55,327 @@ def notify(title: str, body: str, urgent: bool = False) -> None:
     if urgent:
         cmd[1:1] = ["-u", "critical"]
     subprocess.run(cmd, check=False)
+
+
+def token_ok(value: str) -> bool:
+    return bool(value) and all(c.isalnum() or c in "-_" for c in value)
+
+
+def parse_sha256(value: str) -> str:
+    digest = (value or "").strip().lower()
+    if len(digest) != SHA256_HEX_LEN or any(c not in "0123456789abcdef" for c in digest):
+        die(f"invalid sha256 digest {value!r} (expected 64 hex characters)")
+    return digest
+
+
+def sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def layout_is_pinned(layout: dict) -> bool:
+    sha = layout.get("sha256")
+    return isinstance(sha, str) and len(sha.strip()) == SHA256_HEX_LEN
+
+
+def assert_oryx_api_url(url: str) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname != ORYX_API_HOST:
+        die(f"refusing non-Oryx firmware URL: {url}")
+    if parsed.path != "/graphql" and not parsed.path.startswith("/firmware/"):
+        die(f"refusing unexpected Oryx path: {url}")
+
+
+def oryx_open(
+    url: str,
+    data: bytes | None = None,
+    headers: dict | None = None,
+    timeout: int = 30,
+    strict: bool = True,
+):
+    assert_oryx_api_url(url)
+    hdrs = {
+        "User-Agent": USER_AGENT,
+        "Accept": "application/json, application/octet-stream",
+    }
+    if headers:
+        hdrs.update(headers)
+    request = urllib.request.Request(
+        url,
+        data=data,
+        headers=hdrs,
+        method="POST" if data is not None else "GET",
+    )
+    try:
+        response = urllib.request.urlopen(request, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        if not strict:
+            raise
+        die(f"Oryx HTTP {exc.code} for {url}")
+    except urllib.error.URLError as exc:
+        if not strict:
+            raise
+        die(f"Oryx request failed: {exc.reason}")
+    except TimeoutError:
+        if not strict:
+            raise
+        die(f"Oryx request timed out: {url}")
+    final = urlparse(response.geturl())
+    if final.scheme != "https" or final.hostname != ORYX_API_HOST:
+        response.close()
+        message = f"refusing redirect away from Oryx: {response.geturl()}"
+        if not strict:
+            raise urllib.error.URLError(message)
+        die(message)
+    return response
+
+
+def oryx_get_bytes(url: str, timeout: int = 60) -> bytes:
+    with oryx_open(url, timeout=timeout) as response:
+        return response.read()
+
+
+def oryx_get_json(url: str, timeout: int = 30) -> dict:
+    raw = oryx_get_bytes(url, timeout=timeout)
+    try:
+        data = json.loads(raw.decode())
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        die(f"Oryx returned non-JSON from {url}")
+    if not isinstance(data, dict):
+        die(f"Oryx returned unexpected JSON from {url}")
+    return data
+
+
+def oryx_layout_url(layout_id: str, revision: str | None = None) -> str:
+    tail = revision if revision else "latest"
+    return f"{CONFIGURE_ORIGIN}/voyager/layouts/{layout_id}/{tail}"
+
+
+def parse_oryx_geometry(url: str) -> str:
+    parts = (url or "").rstrip("/").split("/")
+    try:
+        index = parts.index("layouts")
+        geo = parts[index - 1]
+    except (ValueError, IndexError):
+        return "voyager"
+    if geo and token_ok(geo) and geo not in ("http:", "https:", "configure.zsa.io"):
+        return geo
+    return "voyager"
+
+
+def latest_revision_url(layout_id: str, geometry: str = "voyager") -> str:
+    """Oryx stock layouts are all id 'default'; the geometry disambiguates them."""
+    if not token_ok(layout_id):
+        die(f"invalid layout id: {layout_id!r}")
+    if not token_ok(geometry):
+        die(f"invalid Oryx geometry: {geometry!r}")
+    if layout_id == "default":
+        return f"{ORYX_API_ORIGIN}/firmware/latest/{geometry}/default"
+    return f"{ORYX_API_ORIGIN}/firmware/latest/{layout_id}"
+
+
+def parse_oryx_url(url: str) -> tuple[str, str | None]:
+    """Return (layout_id, revision). revision is None for omitted /latest /0."""
+    raw = (url or "").strip()
+    if not raw:
+        die("pass an Oryx layout URL")
+    if "REPLACE_ME" in raw:
+        die("URL still contains REPLACE_ME — paste a real Oryx share link")
+    lowered = raw.lower()
+    if "configure.zsa.io" in lowered and "/voyager/" not in lowered:
+        die("expected a Voyager Oryx URL (configure.zsa.io/voyager/layouts/…)")
+    layout_id = parse_oryx_layout_id(raw)
+    if not layout_id or layout_id in ("latest", "0") or not token_ok(layout_id):
+        die(
+            "could not parse layout id from URL\n"
+            "  expected: https://configure.zsa.io/voyager/layouts/<id>/latest"
+        )
+    parts = raw.rstrip("/").split("/")
+    revision = None
+    try:
+        index = parts.index("layouts")
+        if len(parts) > index + 2:
+            candidate = parts[index + 2]
+            if candidate not in ("latest", "0"):
+                if not token_ok(candidate):
+                    die(f"invalid Oryx revision in URL: {candidate!r}")
+                revision = candidate
+    except ValueError:
+        pass
+    return layout_id, revision
+
+
+def fetch_latest_revision(layout_id: str, geometry: str = "voyager") -> str:
+    urls: list[str] = []
+    for candidate in (
+        latest_revision_url(layout_id, geometry),
+        f"{ORYX_API_ORIGIN}/firmware/latest/{geometry}/{layout_id}",
+    ):
+        if candidate not in urls:
+            urls.append(candidate)
+
+    last_status: int | None = None
+    for url in urls:
+        log(f"Resolving Oryx revision: {url}")
+        try:
+            with oryx_open(url, timeout=30, strict=False) as resp:
+                raw = resp.read()
+            data = json.loads(raw.decode())
+        except urllib.error.HTTPError as exc:
+            last_status = exc.code
+            if exc.code == 404:
+                continue
+            die(f"Oryx HTTP {exc.code} for {url}")
+        except urllib.error.URLError as exc:
+            die(f"Oryx request failed: {exc.reason}")
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            die(f"Oryx returned non-JSON from {url}")
+        if not isinstance(data, dict):
+            continue
+        revision = data.get("latest")
+        if isinstance(revision, str) and token_ok(revision) and revision not in ("latest", "0"):
+            return revision
+    extra = f" (HTTP {last_status})" if last_status else ""
+    die(
+        f"Oryx returned no usable revision for layout {layout_id}{extra}\n"
+        "  Compile the layout in Oryx first, then pin again."
+    )
+
+
+def log(msg: str) -> None:
+    print(msg, file=sys.stderr)
+
+
+def download_firmware_bytes(revision: str, dest: Path) -> tuple[bytes, Path]:
+    if not token_ok(revision) or revision in ("latest", "0"):
+        die(f"refusing to download unpinned revision {revision!r}")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    url = f"{ORYX_API_ORIGIN}/firmware/{revision}"
+    log(f"Downloading firmware {revision} …")
+    data = oryx_get_bytes(url, timeout=60)
+    if len(data) < MIN_FIRMWARE_BYTES:
+        die(f"downloaded firmware looks too small ({len(data)} bytes)")
+    partial = dest.with_name(dest.name + ".partial")
+    partial.write_bytes(data)
+    partial.replace(dest)
+    log(f"  saved {dest} ({len(data)} bytes)")
+    log(f"  sha256 {sha256_hex(data)}")
+    return data, dest
+
+
+def pin_layout(
+    layout: dict,
+    revision: str | None = None,
+    expected_sha256: str | None = None,
+    latest: bool = False,
+) -> dict:
+    """Snapshot firmware into layout['revision'] + layout['sha256']. Does not flash."""
+    expected = parse_sha256(expected_sha256) if expected_sha256 else None
+    file_path = layout.get("file")
+    if file_path and not latest:
+        path = Path(str(file_path)).expanduser()
+        if not path.is_file():
+            die(f"layout file missing: {path}")
+        size = path.stat().st_size
+        if size < MIN_FIRMWARE_BYTES:
+            die(f"firmware file looks too small: {path} ({size} bytes)")
+        digest = sha256_file(path)
+        if expected and digest != expected:
+            die(f"file digest mismatch: expected {expected}, got {digest}")
+        layout["sha256"] = digest
+        return layout
+
+    url = str(layout.get("oryx") or "")
+    if not url or "REPLACE_ME" in url:
+        die(f"layout {layout.get('id')!r} has no usable oryx URL or file — edit {CONFIG_PATH}")
+    layout_id, url_revision = parse_oryx_url(url)
+    geometry = parse_oryx_geometry(url)
+    if latest:
+        pinned_revision = fetch_latest_revision(layout_id, geometry)
+    else:
+        pinned_revision = revision or url_revision or fetch_latest_revision(layout_id, geometry)
+    if not token_ok(pinned_revision) or pinned_revision in ("latest", "0"):
+        die(f"invalid Oryx revision: {pinned_revision!r}")
+    dest = CACHE_DIR / f"{layout_id}-{pinned_revision}.bin"
+    data, dest = download_firmware_bytes(pinned_revision, dest)
+    digest = sha256_hex(data)
+    if expected and digest != expected:
+        dest.unlink(missing_ok=True)
+        die(f"downloaded firmware digest mismatch: expected {expected}, got {digest}")
+    layout["oryx"] = oryx_layout_url(layout_id, pinned_revision)
+    layout["revision"] = pinned_revision
+    layout["sha256"] = digest
+    return layout
+
+
+def verified_firmware_file(layout: dict) -> Path:
+    """Return a local firmware file whose sha256 matches the pinned digest."""
+    layout_id = layout.get("id")
+    if not layout_is_pinned(layout):
+        die(
+            f"layout {layout_id!r} is not pinned (missing sha256).\n"
+            f"  Snapshot the firmware first:  voyager-layout pin {layout_id}"
+        )
+    expected = parse_sha256(str(layout["sha256"]))
+
+    file_path = layout.get("file")
+    if file_path:
+        path = Path(str(file_path)).expanduser()
+        if not path.is_file():
+            die(f"layout file missing: {path}")
+        actual = sha256_file(path)
+        if actual != expected:
+            die(
+                f"firmware digest mismatch for {layout_id!r}:\n"
+                f"  expected {expected}\n"
+                f"  got      {actual}\n"
+                f"  If you replaced the file, re-pin:  voyager-layout pin {layout_id}"
+            )
+        if path.stat().st_size < MIN_FIRMWARE_BYTES:
+            die(f"firmware file looks too small: {path}")
+        log(f"  sha256 {actual} (verified local file)")
+        return path
+
+    url = str(layout.get("oryx") or "")
+    layout_hash = parse_oryx_layout_id(url) if url else None
+    revision = layout.get("revision")
+    if not revision and url:
+        _, revision = parse_oryx_url(url)
+    if not isinstance(revision, str) or not token_ok(revision) or revision in ("latest", "0"):
+        die(
+            f"layout {layout_id!r} has no pinned Oryx revision.\n"
+            f"  Snapshot it first:  voyager-layout pin {layout_id}"
+        )
+    cache_id = layout_hash or str(layout_id)
+    dest = CACHE_DIR / f"{cache_id}-{revision}.bin"
+    if dest.is_file():
+        actual = sha256_file(dest)
+        if actual == expected and dest.stat().st_size >= MIN_FIRMWARE_BYTES:
+            log(f"Using cached firmware {dest}")
+            log(f"  sha256 {actual} (verified)")
+            return dest
+        log("Cached firmware digest mismatch — re-downloading pinned revision")
+        dest.unlink(missing_ok=True)
+
+    data, dest = download_firmware_bytes(revision, dest)
+    actual = sha256_hex(data)
+    if actual != expected:
+        dest.unlink(missing_ok=True)
+        die(
+            f"downloaded firmware digest mismatch for {layout_id!r}:\n"
+            f"  pinned revision {revision}\n"
+            f"  expected {expected}\n"
+            f"  got      {actual}\n"
+            "  Refusing to flash. Re-pin if you intended to take a new snapshot."
+        )
+    return dest
 
 
 def load_config() -> dict:
@@ -59,6 +393,18 @@ def load_config() -> dict:
     for i, layout in enumerate(layouts):
         if "id" not in layout:
             die(f"layouts[{i}] missing id")
+        layout_id = str(layout["id"])
+        if not token_ok(layout_id) or layout_id in ("latest", "0"):
+            die(f"layouts[{i}] has invalid id {layout_id!r}")
+        layout["id"] = layout_id
+        if layout.get("sha256"):
+            layout["sha256"] = parse_sha256(str(layout["sha256"]))
+        revision = layout.get("revision")
+        if revision:
+            revision = str(revision)
+            if not token_ok(revision) or revision in ("latest", "0"):
+                die(f"layouts[{i}] has invalid revision {revision!r}")
+            layout["revision"] = revision
     data["layouts"] = layouts
     data.setdefault("settings", {})
     return data
@@ -147,6 +493,9 @@ def cmd_list(cfg: dict, as_json: bool) -> None:
                 "name": layout.get("name", layout["id"]),
                 "oryx": layout.get("oryx"),
                 "file": layout.get("file"),
+                "revision": layout.get("revision"),
+                "sha256": layout.get("sha256"),
+                "pinned": layout_is_pinned(layout),
                 "current": layout["id"] == current,
             }
         )
@@ -157,7 +506,8 @@ def cmd_list(cfg: dict, as_json: bool) -> None:
         return
     for row in rows:
         mark = " *" if row["current"] else ""
-        print(f"{row['id']:16}  {row['name']}{mark}")
+        pin = "" if row["pinned"] else " (unpinned)"
+        print(f"{row['id']:16}  {row['name']}{mark}{pin}")
 
 
 def cmd_status(cfg: dict, as_json: bool) -> None:
@@ -188,6 +538,11 @@ def cmd_status(cfg: dict, as_json: bool) -> None:
         "config": str(CONFIG_PATH),
         "repo": str(REPO_ROOT),
         "usb_vid": VOYAGER_VID,
+        "unpinned": [
+            layout["id"]
+            for layout in cfg.get("layouts") or []
+            if not layout_is_pinned(layout)
+        ],
     }
     if as_json:
         print(json.dumps(info, indent=2))
@@ -201,19 +556,8 @@ def cmd_status(cfg: dict, as_json: bool) -> None:
     print(f"default:   {default or '(unset)'}")
     print(f"zapp:      {zapp or 'NOT FOUND — run: voyager-layout install-deps'}")
     print(f"dfu-util:  {dfu or 'optional — included by install-deps --with-dfu'}")
-
-
-def layout_target(layout: dict) -> str:
-    path = layout.get("file")
-    if path:
-        p = Path(path).expanduser()
-        if not p.is_file():
-            die(f"layout file missing: {p}")
-        return str(p)
-    url = layout.get("oryx")
-    if not url or "REPLACE_ME" in url:
-        die(f"layout {layout['id']!r} has no usable oryx URL or file — edit {CONFIG_PATH}")
-    return url
+    if info["unpinned"]:
+        print(f"unpinned:  {', '.join(info['unpinned'])} — run: voyager-layout pin --all")
 
 
 def ensure_zapp() -> str:
@@ -293,53 +637,38 @@ def parse_oryx_layout_id(url: str) -> str | None:
         return None
 
 
-def normalize_oryx_url(url: str) -> tuple[str, str]:
-    """Return (layout_id, normalized …/layouts/<id>/latest URL)."""
-    raw = (url or "").strip()
-    if not raw:
-        die("pass an Oryx layout URL")
-    if "REPLACE_ME" in raw:
-        die("URL still contains REPLACE_ME — paste a real Oryx share link")
-    lowered = raw.lower()
-    if "voyager/layouts" not in lowered and "/voyager/layouts/" not in lowered:
-        # Also accept path-only pastes that still contain layouts/<id>
-        if "configure.zsa.io" in lowered and "/voyager/" not in lowered:
-            die("expected a Voyager Oryx URL (configure.zsa.io/voyager/layouts/…)")
-    layout_id = parse_oryx_layout_id(raw)
-    if not layout_id or layout_id in ("latest", "0"):
-        die(
-            "could not parse layout id from URL\n"
-            "  expected: https://configure.zsa.io/voyager/layouts/<id>/latest"
-        )
-    if not all(c.isalnum() or c in "-_" for c in layout_id):
-        die(f"invalid layout id in URL: {layout_id!r}")
-    oryx = f"https://configure.zsa.io/voyager/layouts/{layout_id}/latest"
-    return layout_id, oryx
-
-
 def _toml_escape(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def format_layout_block(layout_id: str, name: str, oryx: str) -> str:
-    lid = _toml_escape(layout_id)
-    return (
-        f"[[layouts]]\n"
-        f'id = "{lid}"\n'
-        f'name = "{_toml_escape(name)}"\n'
-        f'oryx = "{_toml_escape(oryx)}"\n'
-    )
+def format_layout_block(layout: dict) -> str:
+    lid = _toml_escape(str(layout["id"]))
+    name = _toml_escape(str(layout.get("name", layout["id"])))
+    lines = [
+        "[[layouts]]\n",
+        f'id = "{lid}"\n',
+        f'name = "{name}"\n',
+    ]
+    if layout.get("oryx"):
+        lines.append(f'oryx = "{_toml_escape(str(layout["oryx"]))}"\n')
+    if layout.get("revision"):
+        lines.append(f'revision = "{_toml_escape(str(layout["revision"]))}"\n')
+    if layout.get("sha256"):
+        lines.append(f'sha256 = "{_toml_escape(str(layout["sha256"]))}"\n')
+    if layout.get("file"):
+        lines.append(f'file = "{_toml_escape(str(layout["file"]))}"\n')
+    return "".join(lines)
 
 
-def write_new_config(layout_id: str, name: str, oryx: str) -> None:
+def write_new_config(layout: dict) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     body = (
         "# Managed by voyager-layout (add from the bar or CLI).\n"
-        "# You can still edit this file by hand.\n\n"
+        "# Flash only uses a pinned revision + sha256; re-pin to take a new snapshot.\n\n"
         "[settings]\n"
-        f'default = "{_toml_escape(layout_id)}"\n'
+        f'default = "{_toml_escape(str(layout["id"]))}"\n'
         "notify = true\n\n"
-        f"{format_layout_block(layout_id, name, oryx)}"
+        f"{format_layout_block(layout)}"
     )
     CONFIG_PATH.write_text(body, encoding="utf-8")
 
@@ -350,7 +679,7 @@ def write_config(cfg: dict) -> None:
     settings = cfg.get("settings") or {}
     lines = [
         "# Managed by voyager-layout (add from the bar or CLI).\n",
-        "# You can still edit this file by hand.\n",
+        "# Flash requires a pinned revision + sha256; run: voyager-layout pin <id>\n",
         "\n",
         "[settings]\n",
     ]
@@ -361,26 +690,18 @@ def write_config(cfg: dict) -> None:
     lines.append(f"notify = {'true' if notify else 'false'}\n")
     lines.append("\n")
     for layout in cfg.get("layouts") or []:
-        lid = layout["id"]
-        name = layout.get("name", lid)
-        lines.append("[[layouts]]\n")
-        lines.append(f'id = "{_toml_escape(str(lid))}"\n')
-        lines.append(f'name = "{_toml_escape(str(name))}"\n')
-        if layout.get("oryx"):
-            lines.append(f'oryx = "{_toml_escape(str(layout["oryx"]))}"\n')
-        if layout.get("file"):
-            lines.append(f'file = "{_toml_escape(str(layout["file"]))}"\n')
+        lines.append(format_layout_block(layout))
         lines.append("\n")
     CONFIG_PATH.write_text("".join(lines), encoding="utf-8")
 
 
-def append_layout(layout_id: str, name: str, oryx: str) -> None:
+def append_layout(layout: dict) -> None:
     text = CONFIG_PATH.read_text(encoding="utf-8") if CONFIG_PATH.is_file() else ""
     if text and not text.endswith("\n"):
         text += "\n"
     if text and not text.endswith("\n\n"):
         text += "\n"
-    text += format_layout_block(layout_id, name, oryx)
+    text += format_layout_block(layout)
     if not text.endswith("\n"):
         text += "\n"
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -389,15 +710,11 @@ def append_layout(layout_id: str, name: str, oryx: str) -> None:
 
 def fetch_oryx_layout_title(layout_id: str, geometry: str = "voyager") -> str | None:
     """Return the human title from Oryx GraphQL, or None on failure."""
-    import urllib.error
-    import urllib.request
-
     headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
-        "User-Agent": "omarchy-voyager/0.0.1 (https://github.com/fram74/omarchy-voyager)",
-        "Origin": "https://configure.zsa.io",
-        "Referer": f"https://configure.zsa.io/{geometry}/layouts/{layout_id}/latest",
+        "Origin": CONFIGURE_ORIGIN,
+        "Referer": f"{CONFIGURE_ORIGIN}/{geometry}/layouts/{layout_id}/latest",
     }
     queries = [
         {
@@ -418,16 +735,17 @@ def fetch_oryx_layout_title(layout_id: str, geometry: str = "voyager") -> str | 
         },
     ]
     for body in queries:
-        req = urllib.request.Request(
-            "https://oryx.zsa.io/graphql",
-            data=json.dumps(body).encode("utf-8"),
-            headers=headers,
-            method="POST",
-        )
         try:
-            with urllib.request.urlopen(req, timeout=20) as resp:
+            payload = json.dumps(body).encode("utf-8")
+            with oryx_open(
+                f"{ORYX_API_ORIGIN}/graphql",
+                data=payload,
+                headers=headers,
+                timeout=20,
+                strict=False,
+            ) as resp:
                 data = json.loads(resp.read().decode())
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, ValueError):
             continue
         layout = (data.get("data") or {}).get("layout") or {}
         title = layout.get("title")
@@ -475,7 +793,7 @@ def prompt_oryx_url() -> str:
         return ""
 
 
-def cmd_add(url: str, as_json: bool) -> None:
+def cmd_add(url: str, as_json: bool, expected_sha256: str | None = None) -> None:
     def fail(msg: str) -> None:
         if as_json:
             print(json.dumps({"error": msg}))
@@ -492,36 +810,57 @@ def cmd_add(url: str, as_json: bool) -> None:
     if "configure.zsa.io" in lowered and "/voyager/" not in lowered:
         fail("expected a Voyager Oryx URL (configure.zsa.io/voyager/layouts/…)")
     layout_id = parse_oryx_layout_id(raw)
-    if not layout_id or layout_id in ("latest", "0"):
+    if not layout_id or layout_id in ("latest", "0") or not token_ok(layout_id):
         fail(
             "could not parse layout id from URL "
             "(expected …/voyager/layouts/<id>/latest)"
         )
-    if not all(c.isalnum() or c in "-_" for c in layout_id):
-        fail(f"invalid layout id in URL: {layout_id!r}")
-    oryx = f"https://configure.zsa.io/voyager/layouts/{layout_id}/latest"
+    parts = raw.rstrip("/").split("/")
+    url_revision = None
+    try:
+        index = parts.index("layouts")
+        if len(parts) > index + 2 and parts[index + 2] not in ("latest", "0"):
+            if not token_ok(parts[index + 2]):
+                fail(f"invalid Oryx revision in URL: {parts[index + 2]!r}")
+            url_revision = parts[index + 2]
+    except ValueError:
+        pass
+
     oryx_title = fetch_oryx_layout_title(layout_id)
     name = oryx_title or layout_id
+    layout = {
+        "id": layout_id,
+        "name": name,
+        "oryx": oryx_layout_url(layout_id, url_revision),
+    }
+    try:
+        pin_layout(layout, revision=url_revision, expected_sha256=expected_sha256)
+    except SystemExit:
+        if as_json:
+            print(json.dumps({"error": f"failed to pin firmware for {layout_id}"}))
+        raise
 
     created = False
     if not CONFIG_PATH.is_file():
-        write_new_config(layout_id, name, oryx)
+        write_new_config(layout)
         created = True
     else:
         cfg = load_config_optional()
-        existing = next((l for l in cfg["layouts"] if l.get("id") == layout_id), None)
+        existing = next((row for row in cfg["layouts"] if row.get("id") == layout_id), None)
         if existing is not None:
-            existing["oryx"] = oryx
-            existing["name"] = name
+            existing.update(layout)
             write_config(cfg)
         else:
-            append_layout(layout_id, name, oryx)
+            append_layout(layout)
             created = True
 
     info = {
         "id": layout_id,
         "name": name,
-        "oryx": oryx,
+        "oryx": layout.get("oryx"),
+        "revision": layout.get("revision"),
+        "sha256": layout.get("sha256"),
+        "pinned": True,
         "created": created,
         "config": str(CONFIG_PATH),
         "name_from_oryx": bool(oryx_title),
@@ -533,8 +872,10 @@ def cmd_add(url: str, as_json: bool) -> None:
     print(f"ok — {action} layout {name!r} ({layout_id})")
     if not oryx_title:
         print("  note:    Oryx title unavailable (private layout or network) — using id")
-    print(f"  oryx:   {oryx}")
-    print(f"  config: {CONFIG_PATH}")
+    print(f"  oryx:     {layout.get('oryx')}")
+    print(f"  revision: {layout.get('revision')}")
+    print(f"  sha256:   {layout.get('sha256')}")
+    print(f"  config:   {CONFIG_PATH}")
 
 
 def cmd_remove(layout_id: str, as_json: bool) -> None:
@@ -615,29 +956,77 @@ def cmd_sync_names(as_json: bool) -> None:
             print(f"  {row['id']} → {row['name']}")
 
 
-def fetch_latest_revision(layout_id: str) -> str:
-    import urllib.request
+def cmd_pin(
+    cfg: dict,
+    layout_id: str | None,
+    revision: str | None,
+    all_layouts: bool,
+    as_json: bool,
+    expected_sha256: str | None = None,
+) -> None:
+    """Download firmware (or hash a local file) and store revision + sha256. Does not flash."""
+    if layout_id and all_layouts:
+        die("pass a layout id or --all, not both")
+    if revision and all_layouts:
+        die("--revision cannot be combined with --all")
+    if revision and (not token_ok(revision) or revision in ("latest", "0")):
+        die(f"invalid Oryx revision: {revision!r}")
 
-    api = f"https://oryx.zsa.io/firmware/latest/{layout_id}"
-    with urllib.request.urlopen(api, timeout=30) as resp:
-        data = json.loads(resp.read().decode())
-    rev = data.get("latest")
-    if not rev:
-        die(f"Oryx returned no revision for layout {layout_id}")
-    return rev
+    # No id and no --all: pin everything (what people type after reading "run pin").
+    if all_layouts or not layout_id:
+        targets = list(cfg["layouts"])
+        if not targets:
+            die("no layouts in config to pin")
+    else:
+        targets = [find_layout(cfg, layout_id)]
 
-
-def download_firmware_bin(revision: str, dest: Path) -> Path:
-    import urllib.request
-
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    url = f"https://oryx.zsa.io/firmware/{revision}"
-    print(f"Downloading firmware {revision} …")
-    urllib.request.urlretrieve(url, dest)
-    if dest.stat().st_size < 1000:
-        die(f"downloaded firmware looks empty: {dest}")
-    print(f"  saved {dest} ({dest.stat().st_size} bytes)")
-    return dest
+    pinned = []
+    failed = []
+    for layout in targets:
+        try:
+            pin_layout(
+                layout,
+                revision=revision,
+                expected_sha256=expected_sha256,
+                latest=revision is None and not layout.get("file"),
+            )
+            pinned.append(
+                {
+                    "id": layout["id"],
+                    "name": layout.get("name", layout["id"]),
+                    "oryx": layout.get("oryx"),
+                    "revision": layout.get("revision"),
+                    "sha256": layout.get("sha256"),
+                    "file": layout.get("file"),
+                }
+            )
+        except SystemExit as exc:
+            if not isinstance(exc.code, int) or exc.code == 0:
+                raise
+            failed.append(str(layout.get("id")))
+    if pinned:
+        write_config(cfg)
+    info = {
+        "pinned": pinned,
+        "failed": failed,
+        "config": str(CONFIG_PATH),
+    }
+    if as_json:
+        print(json.dumps(info, indent=2))
+        if failed:
+            raise SystemExit(1)
+        return
+    if pinned:
+        print(f"ok — pinned {len(pinned)} layout(s)")
+        for row in pinned:
+            rev = row.get("revision") or "(local file)"
+            print(f"  {row['id']}: revision={rev} sha256={row['sha256']}")
+    if failed:
+        die(
+            "failed to pin: "
+            + ", ".join(failed)
+            + (" (other layouts were saved)" if pinned else "")
+        )
 
 
 def wait_for_bootloader(timeout_sec: int = 60) -> str:
@@ -663,7 +1052,7 @@ def wait_for_bootloader(timeout_sec: int = 60) -> str:
 def flash_with_dfu_util(bin_path: Path) -> int:
     dfu = shutil.which("dfu-util")
     if not dfu:
-        die("dfu-util not found. Install with: sudo pacman -S dfu-util")
+        die("dfu-util not found. Install with: voyager-layout install-deps --with-dfu")
 
     pid = wait_for_bootloader()
     # Prefer matching the live bootloader PID; STM32 Ignition is 0791.
@@ -683,42 +1072,9 @@ def flash_with_dfu_util(bin_path: Path) -> int:
     return subprocess.call(cmd)
 
 
-def flash_with_zapp(target: str) -> int:
+def flash_with_zapp(bin_path: Path) -> int:
     zapp = ensure_zapp()
-    return subprocess.call([zapp, "flash", target])
-
-
-def resolve_firmware_file(layout: dict) -> Path:
-    """Return a local .bin for dfu-util (download from Oryx if needed)."""
-    if layout.get("file"):
-        p = Path(layout["file"]).expanduser()
-        if not p.is_file():
-            die(f"layout file missing: {p}")
-        return p
-
-    url = layout.get("oryx") or ""
-    layout_id = parse_oryx_layout_id(url)
-    if not layout_id or "REPLACE_ME" in url:
-        die(f"need a real oryx URL or file for layout {layout.get('id')}")
-
-    # Prefer explicit revision in URL: .../layouts/<id>/<rev>
-    parts = url.rstrip("/").split("/")
-    rev = None
-    try:
-        i = parts.index("layouts")
-        if len(parts) > i + 2 and parts[i + 2] not in ("latest", "0"):
-            if parts[i + 2] != "latest":
-                rev = parts[i + 2]
-    except ValueError:
-        pass
-    if not rev:
-        rev = fetch_latest_revision(layout_id)
-
-    dest = CACHE_DIR / f"{layout_id}-{rev}.bin"
-    if dest.is_file() and dest.stat().st_size > 1000:
-        print(f"Using cached firmware {dest}")
-        return dest
-    return download_firmware_bin(rev, dest)
+    return subprocess.call([zapp, "flash", str(bin_path)])
 
 
 def cmd_open(cfg: dict, layout_id: str | None) -> None:
@@ -748,23 +1104,25 @@ def cmd_flash(cfg: dict, layout_id: str | None, latest: bool, method: str) -> No
     ensure_normal_mode()
     print_flash_howto()
 
-    if latest:
-        if method != "zapp":
-            die("--latest only works with --method zapp (uses zapp update)")
-        zapp = ensure_zapp()
-        if do_notify:
-            notify("Voyager", "Updating current Oryx layout — press Reset when prompted", urgent=True)
-        print("Running: zapp update")
-        print(">>> Wait for the waiting line, THEN press Reset once.")
-        raise SystemExit(subprocess.call([zapp, "update"]))
-
     if not layout_id:
-        layout_id = settings.get("default")
+        layout_id = get_current() if latest else settings.get("default")
+        if latest and not layout_id:
+            layout_id = settings.get("default")
     if not layout_id:
         die("pass a layout id or --latest, or set settings.default")
 
     layout = find_layout(cfg, layout_id)
     name = layout.get("name", layout_id)
+
+    if latest:
+        if layout.get("file") and not layout.get("oryx"):
+            die(
+                f"layout {layout_id!r} is a local file — there is no Oryx latest to re-pin.\n"
+                f"  Re-hash the file with:  voyager-layout pin {layout_id}"
+            )
+        log(f"Re-pinning {layout_id!r} to the current Oryx latest revision …")
+        pin_layout(layout, revision=None, latest=True)
+        write_config(cfg)
 
     if do_notify:
         notify(
@@ -773,15 +1131,18 @@ def cmd_flash(cfg: dict, layout_id: str | None, latest: bool, method: str) -> No
             urgent=True,
         )
 
+    bin_path = verified_firmware_file(layout)
+    digest = layout.get("sha256")
+    revision = layout.get("revision") or "local-file"
     print(f"Flashing layout {layout_id!r} via {method}")
+    print(f"  firmware: {bin_path}")
+    print(f"  revision: {revision}")
+    print(f"  sha256:   {digest}")
+    print(">>> Wait for: Waiting for keyboard in bootloader mode...")
+    print(">>> Then press Reset ONCE.")
     if method == "zapp":
-        target = layout_target(layout)
-        print(f"  target: {target}")
-        print(">>> Wait for: Waiting for keyboard in bootloader mode...")
-        print(">>> Then press Reset ONCE.")
-        code = flash_with_zapp(target)
+        code = flash_with_zapp(bin_path)
     elif method == "dfu-util":
-        bin_path = resolve_firmware_file(layout)
         code = flash_with_dfu_util(bin_path)
     else:
         die(f"unknown method {method!r}")
@@ -864,13 +1225,20 @@ def cmd_pick(cfg: dict, method: str = "zapp") -> None:
             if layout.get("name") == choice:
                 choice = layout["id"]
                 break
+    if choice not in ids or not token_ok(choice):
+        die(f"picker returned unknown layout {choice!r}")
+    if method not in ("zapp", "dfu-util"):
+        die(f"unknown method {method!r}")
 
     # From the bar/menu there is no TTY — open a floating terminal so the
     # "Waiting for bootloader / press Reset" prompt is visible.
     if not sys.stdin.isatty() and shutil.which(
         "omarchy-launch-floating-terminal-with-presentation"
     ):
-        flash_cmd = f"voyager-layout flash {choice} --method {method}; echo; read -k 1"
+        flash_cmd = (
+            f"voyager-layout flash {shlex.quote(choice)} "
+            f"--method {shlex.quote(method)}; echo; read -k 1"
+        )
         subprocess.Popen(
             ["omarchy-launch-floating-terminal-with-presentation", flash_cmd]
         )
@@ -897,7 +1265,7 @@ def build_parser() -> argparse.ArgumentParser:
     flash.add_argument(
         "--latest",
         action="store_true",
-        help="Run zapp update for the layout already on the board",
+        help="Re-pin this layout (or the current one) to Oryx latest, then flash the verified file",
     )
     flash.add_argument(
         "--method",
@@ -929,7 +1297,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     add_p = sub.add_parser(
         "add",
-        help="Add a layout from an Oryx URL (id/name taken from the URL)",
+        help="Add a layout from an Oryx URL and pin its firmware digest",
     )
     add_p.add_argument(
         "url",
@@ -942,7 +1310,37 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Read the Oryx URL from the clipboard (wl-paste)",
     )
+    add_p.add_argument(
+        "--sha256",
+        dest="sha256",
+        help="Require this SHA-256 of the downloaded firmware (64 hex chars)",
+    )
     add_p.add_argument("--json", action="store_true")
+
+    pin_p = sub.add_parser(
+        "pin",
+        help="Snapshot firmware (revision + sha256) without flashing",
+    )
+    pin_p.add_argument(
+        "id",
+        nargs="?",
+        help="Layout id from config (omit, or pass --all, to pin every layout)",
+    )
+    pin_p.add_argument(
+        "--all",
+        action="store_true",
+        help="Pin every layout in the config (default if no id is given)",
+    )
+    pin_p.add_argument(
+        "--revision",
+        help="Pin this Oryx revision instead of resolving latest",
+    )
+    pin_p.add_argument(
+        "--sha256",
+        dest="sha256",
+        help="Require this SHA-256 of the firmware (64 hex chars)",
+    )
+    pin_p.add_argument("--json", action="store_true")
 
     rm_p = sub.add_parser("remove", help="Remove a layout from the config")
     rm_p.add_argument("id", help="Layout id to remove")
@@ -989,7 +1387,7 @@ def main(argv: list[str] | None = None) -> None:
             url = prompt_oryx_url()
             if not url:
                 die("no URL entered")
-        cmd_add(url, args.json)
+        cmd_add(url, args.json, expected_sha256=args.sha256)
         return
 
     if args.cmd == "remove":
@@ -998,6 +1396,17 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.cmd == "sync-names":
         cmd_sync_names(args.json)
+        return
+
+    if args.cmd == "pin":
+        cmd_pin(
+            load_config(),
+            args.id,
+            revision=args.revision,
+            all_layouts=args.all,
+            as_json=args.json,
+            expected_sha256=args.sha256,
+        )
         return
 
     if args.cmd == "list":

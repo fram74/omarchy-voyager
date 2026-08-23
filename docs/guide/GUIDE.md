@@ -1,7 +1,7 @@
 # Visual guide — Omarchy Voyager Layouts
 
 Demos captured on an **external monitor** (empty wallpaper workspace) with a ZSA Voyager connected, so no personal app windows appear.  
-Plugin version **0.1.1**. For install details, legal disclaimer, and troubleshooting, see the [main README](../../README.md).
+Plugin version **0.2.0**. For install details, legal disclaimer, and troubleshooting, see the [main README](../../README.md).
 
 > **Unofficial.** Not affiliated with ZSA Technology Labs. Flashing firmware is at your own risk.
 
@@ -49,8 +49,8 @@ If the keyboard is unplugged, the icon **hides** automatically.
 | Row | What it does |
 |-----|----------------|
 | **Layout rows** (Oryx titles) | Flash that layout. A floating terminal opens; press **Reset** when prompted. Trash icon removes it from the config. |
-| **Add from Oryx URL** | Opens a text field — paste with Ctrl+V (or **Clipboard**). Name comes from the Oryx layout title. |
-| **Flash latest revision** | Runs `zapp update` for the layout already on the board. |
+| **Add from Oryx URL** | Opens a text field — paste with Ctrl+V (or **Clipboard**). Pins the compiled image by SHA-256. Name comes from the Oryx layout title. |
+| **Re-pin & flash latest** | Re-pin the current layout to Oryx latest, verify SHA-256, then flash. |
 | **Open current in Oryx** | Opens the layout in your browser to edit. |
 | **Install / Reinstall flash tools** | Installs Zapp from the AUR (and optionally `dfu-util`). Required once before the first flash. |
 
@@ -85,3 +85,9 @@ Plugin id: `net.moggia.voyager-layouts`
 omarchy plugin disable net.moggia.voyager-layouts
 omarchy plugin remove net.moggia.voyager-layouts
 ```
+
+---
+
+## 6. Developer testing
+
+Validate, load a local checkout, CLI tests, and a live-UI checklist: **[TESTING.md](TESTING.md)**.

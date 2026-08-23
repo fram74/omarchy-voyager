@@ -520,7 +520,7 @@ Panel {
 
             Text {
               width: parent.width
-              text: "Paste a compiled Oryx share link (Ctrl+V). The Oryx layout title is used as the name."
+              text: "Paste a compiled Oryx share link (Ctrl+V). The compiled image is pinned by SHA-256; the Oryx title is used as the name."
               wrapMode: Text.WordWrap
               color: root.foreground
               opacity: 0.65
@@ -618,7 +618,7 @@ Panel {
           Button {
             width: parent.width
             iconText: "󰚰"
-            text: "Flash latest revision"
+            text: "Re-pin & flash latest"
             fontSize: Style.font.bodySmall
             fontFamily: root.fontFamily
             foreground: root.foreground
@@ -659,7 +659,7 @@ Panel {
 
         Text {
           width: parent.width
-          text: "Flashing needs the Reset button after the waiting prompt."
+          text: "Flash writes only a pinned SHA-256. Re-pin to take a new snapshot. Reset after the waiting prompt."
           wrapMode: Text.WordWrap
           color: root.foreground
           opacity: 0.5

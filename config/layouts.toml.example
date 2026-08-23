@@ -2,7 +2,11 @@
 #
 # 1. Compile a layout at https://configure.zsa.io/voyager
 # 2. Copy the layout URL (…/layouts/<id>/latest or …/layouts/<id>/<revision>)
-# 3. Replace REPLACE_ME below
+# 3. Replace REPLACE_ME below, then pin before flashing:
+#      voyager-layout pin --all
+#    Prefer the bar “Add from Oryx URL” action or `voyager-layout add <url>`,
+#    which download the compiled image, record revision + sha256, and refuse
+#    to flash if that digest does not match later.
 #
 # Full setup, flashing tips, and legal disclaimer: see README.md
 # This project is unofficial and not affiliated with ZSA.
@@ -15,6 +19,9 @@ notify = true
 id = "daily"
 name = "Daily"
 oryx = "https://configure.zsa.io/voyager/layouts/REPLACE_ME/latest"
+# After pinning, these two fields are required to flash:
+# revision = "abc123def"
+# sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 # Optional documented hotkey (wire in hypr/bindings.lua.snippet):
 # hotkey = "SUPER + SHIFT + F1"
 
@@ -27,5 +34,6 @@ oryx = "https://configure.zsa.io/voyager/layouts/REPLACE_ME_TOO/latest"
 id = "coding"
 name = "Coding"
 oryx = "https://configure.zsa.io/voyager/layouts/REPLACE_ME_THREE/latest"
-# Or flash a local binary instead of / as well as an Oryx URL:
+# Or flash a local binary. Pin records sha256 of that file:
 # file = "/home/fram/.local/share/voyager/coding.bin"
+# sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"

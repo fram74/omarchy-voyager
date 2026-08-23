@@ -14,6 +14,8 @@ mkdir -p "$BIN_DIR" "$CONFIG_DIR" "$(dirname "$PLUGIN_DST")"
 
 chmod +x "$ROOT/bin/voyager-layout"
 ln -sfn "$ROOT/bin/voyager-layout" "$BIN_DIR/voyager-layout"
+# Plugin id is plural; accept that as the CLI name too.
+ln -sfn "$ROOT/bin/voyager-layout" "$BIN_DIR/voyager-layouts"
 
 if [[ ! -f "$CONFIG_DIR/layouts.toml" ]]; then
   cp "$ROOT/config/layouts.toml.example" "$CONFIG_DIR/layouts.toml"

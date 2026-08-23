@@ -8,7 +8,8 @@ Use the top-bar keyboard icon (dropdown), the Omarchy menu, optional Hyprland ho
 
 [![Top bar Voyager dropdown demo](https://img.youtube.com/vi/If5TmJpFCKQ/maxresdefault.jpg)](https://www.youtube.com/watch?v=If5TmJpFCKQ&autoplay=1)
 
-Full walkthrough: [docs/guide/GUIDE.md](docs/guide/GUIDE.md)
+Full walkthrough: [docs/guide/GUIDE.md](docs/guide/GUIDE.md)  
+Developer testing: [docs/guide/TESTING.md](docs/guide/TESTING.md)
 
 ---
 
@@ -79,7 +80,7 @@ This installs `zsa-zapp` from the AUR (and optionally `dfu-util` from official r
 
 `https://configure.zsa.io/voyager/layouts/xPOwx/latest`
 
-The plugin stores the URL, keeps the path segment as **id**, and looks up the human **name** from Oryx (e.g. “Elixir Development”). Config is written to `~/.config/omarchy-voyager/layouts.toml` (created if missing). In the panel, use the trash control on a row to **remove** a layout.
+Adding **pins** the compiled firmware: the plugin resolves `/latest` to a specific Oryx revision, downloads that image, and stores its **SHA-256** in `~/.config/omarchy-voyager/layouts.toml`. Flash later uses only that digest — a different file is refused. Config is created if missing. In the panel, use the trash control on a row to **remove** a layout.
 
 From **Super+Space → Voyager → Add from Oryx URL**, the same bar panel opens so you can paste with **Ctrl+V**.
 
@@ -110,7 +111,15 @@ name = "Daily"
 oryx = "https://configure.zsa.io/voyager/layouts/YOUR_ID/latest"
 ```
 
-Local firmware file instead of (or as well as) an Oryx URL:
+Then pin (downloads the compiled image and records `revision` + `sha256`):
+
+```bash
+voyager-layout pin daily
+# or, if you already know the digest:
+voyager-layout pin daily --sha256 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+```
+
+Local firmware file instead of (or as well as) an Oryx URL. Pin hashes the file:
 
 ```toml
 file = "/home/YOU/.local/share/voyager/gaming.bin"
@@ -120,7 +129,10 @@ file = "/home/YOU/.local/share/voyager/gaming.bin"
 
 ```bash
 ln -sfn ~/.config/omarchy/plugins/net.moggia.voyager-layouts/bin/voyager-layout ~/.local/bin/voyager-layout
+ln -sfn ~/.config/omarchy/plugins/net.moggia.voyager-layouts/bin/voyager-layout ~/.local/bin/voyager-layouts
 ```
+
+The CLI name is **`voyager-layout`**. `voyager-layouts` is the same binary (the plugin id is plural).
 
 ### 5. Optional: Omarchy menu entries
 
@@ -135,7 +147,7 @@ See `hypr/bindings.lua.snippet`. Append the bindings you want into `~/.config/hy
 | Shortcut | Action |
 |----------|--------|
 | `Super+Shift+V` | Layout picker, then flash |
-| `Super+Shift+U` | Flash latest revision of what’s on the board (`zapp update`) |
+| `Super+Shift+U` | Re-pin the current layout to Oryx latest, verify SHA-256, then flash |
 
 Hotkeys **stage** a flash; you still must press **Reset** when prompted.
 
@@ -151,7 +163,7 @@ Hotkeys **stage** a flash; you still must press **Reset** when prompted.
 
 Other panel actions:
 
-- **Flash latest revision** — `zapp update` for the layout already stored on the board  
+- **Re-pin & flash latest** — re-pin the current layout to Oryx’s latest compiled revision, store the new SHA-256, then flash that verified file  
 - **Open current in Oryx** — opens the layout URL in your browser  
 - **Install flash tools** / **Reinstall / check flash tools** — user-initiated AUR install  
 
@@ -167,7 +179,19 @@ Wrong timing is the most common cause of `USB transfer error: hardware fault or 
 4. Press **Reset once**.
 5. Wait until the process finishes before unplugging.
 
-Keep at least one known-good layout URL in your config so you can recover if a flash goes wrong.
+Keep at least one known-good pinned layout in your config so you can recover if a flash goes wrong.
+
+### Firmware pinning
+
+Oryx `/latest` is mutable: a later compile can change the bytes behind the same URL. This plugin **does not flash `/latest`**. `add` and `pin` snapshot a specific revision and the SHA-256 of that file into `layouts.toml`. `flash` then:
+
+1. Downloads that **pinned revision** (or uses a local `file =`)
+2. Refuses to continue unless the SHA-256 matches the stored digest
+3. Passes only that verified local file to Zapp / `dfu-util`
+
+`flash --latest` (the bar’s **Re-pin & flash latest** button) is the explicit way to take a **new** snapshot, record the new digest, and flash it. Pass `--sha256` to `add` / `pin` if you already know the digest and want the download rejected on mismatch.
+
+If you already have a `layouts.toml` from plugin 0.1.x, run `voyager-layout pin --all` once before flashing.
 
 ---
 
@@ -175,12 +199,15 @@ Keep at least one known-good layout URL in your config so you can recover if a f
 
 ```bash
 voyager-layout status              # USB mode, current layout, whether Zapp is installed
-voyager-layout list                # Configured layouts
-voyager-layout add <oryx-url>      # Add layout from Oryx URL (name from Oryx title)
+voyager-layout list                # Configured layouts (unpinned ones are marked)
+voyager-layout add <oryx-url>      # Add + pin firmware (name from Oryx title)
+voyager-layout add <oryx-url> --sha256 <hex>  # Add only if the download matches
+voyager-layout pin <id>            # Snapshot latest compiled revision + sha256
+voyager-layout pin --all           # Pin every layout in the config
 voyager-layout remove <id>         # Remove a layout from the config
 voyager-layout sync-names          # Refresh names from Oryx titles
-voyager-layout flash <id>          # Flash a layout from config (then Reset)
-voyager-layout flash --latest      # Update layout already on the board
+voyager-layout flash <id>          # Flash the pinned, verified image (then Reset)
+voyager-layout flash --latest      # Re-pin current layout to Oryx latest, then flash
 voyager-layout flash <id> --method dfu-util   # Fallback flasher
 voyager-layout open [id]           # Open layout in Oryx
 voyager-layout pick                # Omarchy menu picker, then flash
@@ -202,7 +229,9 @@ State (last flashed id): `~/.local/state/omarchy-voyager/current`
 | “zapp not found” | Bar → **Install flash tools**, or `voyager-layout install-deps` |
 | `hardware fault or protocol violation` | Unplug/replug to normal mode; direct USB port; Reset only after the waiting line; or `--method dfu-util` |
 | Flash starts with no waiting line | Board was already in bootloader — unplug/replug, then flash again |
-| Layout URL errors | Compile the layout in Oryx first; use `/latest` or a real revision id |
+| Layout URL errors | Compile the layout in Oryx first, then `voyager-layout add` or `pin` |
+| `not pinned (missing sha256)` | Layout was added by hand without a digest — run `voyager-layout pin <id>` |
+| `firmware digest mismatch` | File or Oryx image changed since it was pinned; re-pin only if you intended a new snapshot |
 | Want to uninstall | See [Remove](#remove) |
 
 Official ZSA flashing docs (for comparison / recovery): [zsa.io/flash](https://zsa.io/flash). This project does not replace Keymapp or ZSA support.
@@ -227,7 +256,7 @@ Optional cleanup (not deleted by `plugin remove`):
 rm -rf ~/.config/omarchy-voyager ~/.local/state/omarchy-voyager
 
 # CLI symlink, if you created one
-rm -f ~/.local/bin/voyager-layout
+rm -f ~/.local/bin/voyager-layout ~/.local/bin/voyager-layouts
 ```
 
 Flash tools installed via **Install flash tools** / `voyager-layout install-deps` (`zsa-zapp`, optional `dfu-util`) stay on the system until you uninstall them with your package manager (for example `yay -Rns zsa-zapp`).
@@ -238,13 +267,15 @@ If you merged Voyager entries into `~/.config/omarchy/extensions/omarchy-menu.js
 
 ## Developer / local checkout
 
+Work from an existing checkout of this repository. Do not fetch remote HEAD and run the installer in one step — `./scripts/install.sh` only links **this** checkout.
+
 ```bash
-git clone git@github.com:fram74/omarchy-voyager.git
-cd omarchy-voyager
 ./scripts/install.sh
 voyager-layout install-deps --with-dfu
 omarchy plugin validate .
 ```
+
+How to validate, hot-reload, run CLI tests, and click through the live shell: **[docs/guide/TESTING.md](docs/guide/TESTING.md)**.
 
 Repo layout:
 
@@ -253,7 +284,8 @@ manifest.json              # Required at git root for omarchy plugin add
 BarWidget.qml / Panel.qml
 bin/voyager-layout
 config/layouts.toml.example
-menu/  hypr/  scripts/
+docs/guide/                # User GUIDE.md + TESTING.md
+menu/  hypr/  scripts/  tests/
 ```
 
 ---

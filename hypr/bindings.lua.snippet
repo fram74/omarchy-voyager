@@ -7,7 +7,7 @@
 -- Picker (all layouts from ~/.config/omarchy-voyager/layouts.toml)
 o.bind("SUPER + SHIFT + V", "Voyager layout picker", "voyager-layout pick")
 
--- Update the layout already on the board to its latest Oryx revision
+-- Re-pin the current layout to Oryx latest (records a new sha256), then flash
 o.bind("SUPER + SHIFT + U", "Voyager flash latest", "voyager-layout flash --latest")
 
 -- Optional: direct flash for specific ids (uncomment and match your config)
