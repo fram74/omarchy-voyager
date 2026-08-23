@@ -11,9 +11,9 @@ Plugin version **0.0.1**. For install details, legal disclaimer, and troubleshoo
 
 **Left-click** the keyboard icon on the Omarchy top bar:
 
-<video src="images/topbar-ui.mp4" controls width="100%"></video>
+[![Top bar Voyager dropdown demo](https://img.youtube.com/vi/If5TmJpFCKQ/maxresdefault.jpg)](https://www.youtube.com/watch?v=If5TmJpFCKQ&autoplay=1)
 
-[Open topbar-ui.mp4](images/topbar-ui.mp4)
+[Watch on YouTube](https://youtu.be/If5TmJpFCKQ)
 
 ---
 

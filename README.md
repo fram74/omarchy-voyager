@@ -6,7 +6,7 @@ Use the top-bar keyboard icon (dropdown), the Omarchy menu, optional Hyprland ho
 
 > **Not the same as** Omarchy’s built-in `omarchy.keyboard-layout` widget, which only cycles **OS / xkb** input languages (US, SE, …). This plugin flashes **keyboard firmware layouts**.
 
-<video src="docs/guide/images/topbar-ui.mp4" autoplay muted loop playsinline controls width="100%"></video>
+[![Top bar Voyager dropdown demo](https://img.youtube.com/vi/If5TmJpFCKQ/maxresdefault.jpg)](https://www.youtube.com/watch?v=If5TmJpFCKQ&autoplay=1)
 
 Full walkthrough: [docs/guide/GUIDE.md](docs/guide/GUIDE.md)
 
