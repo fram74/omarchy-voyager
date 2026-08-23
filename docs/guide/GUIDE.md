@@ -1,9 +1,19 @@
 # Visual guide — Omarchy Voyager Layouts
 
-Screenshots captured on an **external monitor** (empty wallpaper workspace) with a ZSA Voyager connected, so no personal app windows appear.  
+Demo captured on an **external monitor** (empty wallpaper workspace) with a ZSA Voyager connected, so no personal app windows appear.  
 Plugin version **0.0.1**. For install details, legal disclaimer, and troubleshooting, see the [main README](../../README.md).
 
 > **Unofficial.** Not affiliated with ZSA Technology Labs. Flashing firmware is at your own risk.
+
+---
+
+## Demo
+
+Bar icon dropdown and **Super+Space** launcher (Omarchy Voyager Layouts):
+
+<video src="images/voyager-ui-demo.mp4" controls width="100%"></video>
+
+[Open the demo video](images/voyager-ui-demo.mp4)
 
 ---
 
@@ -11,27 +21,22 @@ Plugin version **0.0.1**. For install details, legal disclaimer, and troubleshoo
 
 When the Voyager is plugged in, a **keyboard icon** appears on the right side of the Omarchy top bar (between the system tray and Agents / Bluetooth).
 
-![Top bar with Voyager keyboard icon](images/bar.png)
-
-Closer look — the keyboard glyph is the Voyager control (here between the tray icons and the Agents “A” badge):
-
-![Voyager icon detail on the bar](images/bar-icon.png)
-
 If the keyboard is unplugged, the icon **hides** automatically.
 
 ---
 
-## 2. Open the dropdown
+## 2. Open the UI
 
-**Left-click** the keyboard icon. A panel drops down under the bar (same pattern as Bluetooth or Power):
+Two ways (both shown in the demo above):
 
-![Bar with Voyager dropdown open](images/dropdown-context.png)
+| How | What you get |
+|-----|----------------|
+| **Left-click** the keyboard icon | Dropdown panel under the bar (same pattern as Bluetooth or Power) |
+| **Super+Space** → *Omarchy Voyager Layouts* | Full Omarchy menu entry for the same actions |
 
 ---
 
 ## 3. What’s in the panel
-
-![Voyager layouts dropdown](images/dropdown.png)
 
 | Row | What it does |
 |-----|----------------|
@@ -44,18 +49,10 @@ Header shows connection status and the last recorded layout (e.g. `Current · da
 
 ---
 
-## 4. Desktop context
-
-Full desktop with the panel open:
-
-![Desktop overview with Voyager panel](images/desktop-overview.jpg)
-
----
-
-## 5. Flashing (short version)
+## 4. Flashing (short version)
 
 1. Keys must work (**normal** mode). If unsure: unplug → wait 5s → plug in directly (no hub).
-2. Click a layout in the dropdown.
+2. Pick a layout from the dropdown or Super+Space menu.
 3. In the floating terminal, wait for:  
    `Waiting for keyboard in bootloader mode...`
 4. Press the Voyager **Reset** button **once**.
@@ -65,7 +62,7 @@ Full procedure, config (`layouts.toml`), CLI, and recovery tips: **[README](../.
 
 ---
 
-## 6. Install this plugin
+## 5. Install this plugin
 
 ```bash
 omarchy plugin add https://github.com/fram74/omarchy-voyager.git --enable

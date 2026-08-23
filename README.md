@@ -24,17 +24,11 @@ It is **not** created, endorsed, sponsored, affiliated with, or supported by:
 
 “Voyager”, “Oryx”, “ZSA”, “Keymapp”, “Zapp”, and related names are property of their respective owners and are used here only to describe compatibility.
 
-### Assumption of risk — no warranty — limitation of liability
+### Firmware flashing risk
 
-**Flashing firmware can make your keyboard temporarily or permanently unusable, erase or corrupt layouts, require recovery procedures, or cause other hardware or data issues.** USB flashing tools interact with device bootloaders; mistakes, bad cables, power loss, incompatible firmware, interrupted flashes, or software bugs may result in a board that will not enumerate until recovered (or, in rare cases, not at all).
+**Flashing firmware can make your keyboard temporarily or permanently unusable, erase or corrupt layouts, require recovery procedures, or cause other hardware or data issues.** USB flashing tools interact with device bootloaders; mistakes, bad cables, power loss, incompatible firmware, interrupted flashes, or software bugs may result in a board that will not enumerate until recovered (or, in rare cases, not at all). Use this software **at your own risk**.
 
-**THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.**
-
-**IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE — INCLUDING BUT NOT LIMITED TO ANY DAMAGE TO, LOSS OF USE OF, OR COST OF REPAIR OR REPLACEMENT OF A KEYBOARD OR OTHER HARDWARE, LOSS OF DATA, LOSS OF PROFITS, OR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.**
-
-By installing or using this software you acknowledge that you understand these risks, that you use the software **entirely at your own risk**, and that **you alone are responsible** for any consequences of flashing your device. If you do not agree, do not install or use this software.
-
-See also the [MIT License](LICENSE).
+The “AS IS” warranty disclaimer and limitation of liability are in the [MIT License](LICENSE).
 
 ---
 
