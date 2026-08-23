@@ -21,9 +21,9 @@ Plugin version **0.0.1**. For install details, legal disclaimer, and troubleshoo
 
 **Super+Space** → *Omarchy Voyager Layouts*:
 
-<video src="images/super-ui.mp4" controls width="100%"></video>
+[![Super+Space Voyager menu demo](https://img.youtube.com/vi/pZb-h5aKjsg/maxresdefault.jpg)](https://www.youtube.com/watch?v=pZb-h5aKjsg&autoplay=1)
 
-[Open super-ui.mp4](images/super-ui.mp4)
+[Watch on YouTube](https://youtu.be/pZb-h5aKjsg)
 
 ---
 
