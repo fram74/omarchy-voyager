@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "net.moggia.voyager-layouts",
   "name": "Voyager Layouts",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "author": "fram",
   "license": "MIT",
   "description": "Switch ZSA Voyager Oryx layouts from the Omarchy bar. Firmware is pinned by revision and SHA-256 before flash; Zapp (AUR) writes the verified image.",

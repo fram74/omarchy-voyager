@@ -14,7 +14,8 @@ mkdir -p "$BIN_DIR" "$CONFIG_DIR" "$(dirname "$PLUGIN_DST")"
 
 chmod +x "$ROOT/bin/voyager-layout"
 ln -sfn "$ROOT/bin/voyager-layout" "$BIN_DIR/voyager-layout"
-# Plugin id is plural; accept that as the CLI name too.
+# Plugin id is plural; PATH alias only (never a symlink inside the plugin tree —
+# omarchy plugin validate / marketplace Quattro reject inner symlinks).
 ln -sfn "$ROOT/bin/voyager-layout" "$BIN_DIR/voyager-layouts"
 
 if [[ ! -f "$CONFIG_DIR/layouts.toml" ]]; then
