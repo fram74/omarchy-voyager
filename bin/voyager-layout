@@ -18,7 +18,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 APP = "voyager-layout"
-APP_VERSION = "0.2.3"
+APP_VERSION = "0.2.4"
 USER_AGENT = f"omarchy-voyager/{APP_VERSION} (https://github.com/fram74/omarchy-voyager)"
 # Plugin / repo root (parent of bin/)
 REPO_ROOT = Path(__file__).resolve().parent.parent
